@@ -22,10 +22,11 @@ def _write_static(tmp_path):
     d = tmp_path / "static"
     d.mkdir()
     stops = {"A": {"name": "Západ", "lat": ll(0)[1], "lon": ll(0)[0], "lines": ["83"]},
-             "B": {"name": "Východ", "lat": ll(10_000)[1], "lon": ll(10_000)[0], "lines": ["83"]}}
+             "B": {"name": "Východ", "lat": ll(10_000)[1], "lon": ll(10_000)[0], "lines": ["83"]},
+             "M": {"name": "Stred", "lat": ll(5000)[1], "lon": ll(5000)[0], "lines": ["83"]}}
     lines = {"83": {"line": "83", "type": "bus", "color": "#000", "textColor": "#fff", "directions": {
-        "0": {"headsign": "Východ", "headsigns": ["Most SNP", "Východ"], "from": "Západ", "stops": ["A", "B"],
-              "stopDist": [0, 10_000], "length": 10_000, "duration": 1200},
+        "0": {"headsign": "Východ", "headsigns": ["Most SNP", "Východ"], "from": "Západ", "stops": ["A", "M", "B"],
+              "stopDist": [0, 5000, 10_000], "length": 10_000, "duration": 1200},
         "1": {"headsign": "Západ", "headsigns": ["Most SNP", "Západ"], "from": "Východ", "stops": ["B", "A"],
               "stopDist": [0, 10_000], "length": 10_000, "duration": 1200},
     }}}
@@ -104,7 +105,9 @@ def test_line_view_orders_vehicles_and_flags_gaps_and_bunching(tmp_path):
     # b→c is 8 km = 960 s: a gap. c→t is 950 m, but t is at the terminus, so no bunching flag.
     assert flags == {"a": "bunched", "b": "gap", "c": None, "t": None}
     assert d0["interval"] == 600 and d0["summary"]["gaps"] == 1 and d0["summary"]["bunched"] == 1
-    assert d0["summary"]["biggestGap"]["s"] == 960
+    # The gap runs from b (last stop Západ) to c (last stop Stred).
+    assert d0["summary"]["biggestGap"] == {"s": 960, "fromStop": "Západ", "afterStop": "Stred"}
+    assert d0["branches"] == []
     assert view["unmatched"] == [{"key": "depot", "dest": "Depo Petržalka", "reason": "to_depot"}]
 
 
@@ -149,3 +152,21 @@ def test_history_buckets_by_local_wall_clock_on_dst_day(tmp_path):
     from datetime import date
 
     assert day_curve(tmp_path, date(2027, 10, 31)) == {22 * 6: 0.5}
+
+
+def test_vehicle_on_a_branch_is_on_route_but_gets_no_gaps(tmp_path):
+    _write_static(tmp_path)
+    # A branch of direction 0 that joins the main route at 2 km from 2 km north.
+    branch = [list(ll(2000, 2000)), list(ll(2000, 0)), list(ll(10_000))]
+    (tmp_path / "static" / "branches.json").write_text(json.dumps({"83": {"0": [branch]}}))
+    s = Static.load(tmp_path)
+    p = Poller(logger=None)
+    lon, lat = ll(2005, 1500)
+    p.apply([Vehicle("br", "83", "Východ", "bus", lat, lon, 0, 1, 180), _bus("a", 2500)], MON_1630)
+    derived = lineview.derive_poll(p.snapshot, s)
+    d0 = lineview.line_view("83", p.snapshot, derived, s, MON_1630)["directions"][0]
+    assert d0["branches"] == [branch]
+    br = next(v for v in d0["vehicles"] if v["key"] == "br")
+    assert br["onBranch"] and not br["offRoute"] and "gapAhead" not in br
+    assert d0["summary"]["count"] == 1
+    assert lineview.city_status(p.snapshot, derived, s, MON_1630)["vehicles"] == 2

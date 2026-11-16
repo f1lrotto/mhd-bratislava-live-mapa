@@ -26,6 +26,10 @@ class Direction:
     duration: int | None  # median scheduled run time of the main pattern, seconds
     shape: Polyline
     coords: list[list[float]]
+    # Shapes of branches that end at this direction's headsign but leave the main route
+    branch_shapes: list[Polyline]
+    branches: list[list[list[float]]]
+    ref_stop: int  # index of the stop the timetable departures are timed at
 
 
 class Static:
@@ -38,6 +42,8 @@ class Static:
         self.calendar: dict[str, dict] = service["calendar"]
         self.departures: dict[str, dict[str, dict[str, list[int]]]] = service["departures"]
         shapes = json.loads((static_dir / "shapes.json").read_text())
+        branches_path = static_dir / "branches.json"
+        branches = json.loads(branches_path.read_text()) if branches_path.exists() else {}
 
         self.directions: dict[str, dict[str, Direction]] = {}
         # (line, headsign) -> direction ids that list the headsign
@@ -45,6 +51,7 @@ class Static:
         for line, info in self.lines.items():
             for d, di in info["directions"].items():
                 coords = shapes[line][d]
+                bs = branches.get(line, {}).get(d, [])
                 self.directions.setdefault(line, {})[d] = Direction(
                     line=line,
                     id=d,
@@ -56,6 +63,9 @@ class Static:
                     duration=di.get("duration"),
                     shape=Polyline([tuple(c) for c in coords]),
                     coords=coords,
+                    branch_shapes=[Polyline([tuple(c) for c in b]) for b in bs],
+                    branches=bs,
+                    ref_stop=di.get("refStop", 0),
                 )
                 for h in di["headsigns"]:
                     self.by_headsign.setdefault((line, h), []).append(d)
@@ -86,7 +96,7 @@ class Static:
         return self._active_cache[day]
 
     def departures_around(self, line: str, direction: str, now: datetime) -> list[int]:
-        """First-stop departures as seconds after local midnight of `now`'s day, including trips
+        """Departures at the direction's reference stop as seconds after local midnight of `now`'s day, including trips
         of yesterday's service day that run past midnight (GTFS times above 24:00)."""
         local = now.astimezone(TZ)
         today = local.date()
@@ -98,7 +108,7 @@ class Static:
         return sorted(t for t in out if t >= -3600)
 
     def scheduled_interval(self, line: str, direction: str, now: datetime) -> int | None:
-        """Median gap between departures from the first stop in the current local hour, in seconds.
+        """Median gap between departures at the reference stop in the current local hour, in seconds.
 
         The first departure of the next hour is included so an hour with one departure still has
         a gap. Returns None when the line doesn't run this hour."""
@@ -117,9 +127,10 @@ class Static:
 
     def match_direction(
         self, line: str | None, dest: str | None, lon: float, lat: float, az: int | None
-    ) -> tuple[Direction, float, float] | None:
-        """The direction a vehicle runs in, with its distance along the route and its distance
-        from the route (metres). None for depot runs, unknown destinations and unknown lines."""
+    ) -> tuple[Direction, float, float, float | None] | None:
+        """The direction a vehicle runs in, with its distance along the main route, its distance
+        from the main route and its distance from the nearest branch shape (None without
+        branches), in metres. None for depot runs, unknown destinations and unknown lines."""
         if line is None or dest is None:
             return None
         cands = self.by_headsign.get((line, dest))
@@ -129,15 +140,21 @@ class Static:
         for d in cands:
             dr = self.directions[line][d]
             along, off = dr.shape.project(lon, lat)
-            score = off
+            # The nearest of the main shape and the branch shapes decides the score and heading.
+            score, shape, at = off, dr.shape, along
+            boff = None
+            for bs in dr.branch_shapes:
+                b_along, b_off = bs.project(lon, lat)
+                boff = b_off if boff is None else min(boff, b_off)
+                if b_off < score:
+                    score, shape, at = b_off, bs, b_along
             if len(cands) > 1 and az is not None:
-                b = dr.shape.bearing_at(along)
+                b = shape.bearing_at(at)
                 if b is not None and _angle_diff(b, az) > 90:
                     score += 500  # heading the wrong way along this direction
             if best is None or score < best[0]:
-                best = (score, dr, along, off)
-        _, dr, along, off = best
-        return dr, along, off
+                best = (score, dr, along, off, boff)
+        return best[1:]
 
     def stop_before(self, dr: Direction, along: float) -> int:
         """Index of the last stop at or before `along`."""

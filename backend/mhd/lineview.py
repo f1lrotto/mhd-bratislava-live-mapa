@@ -23,7 +23,13 @@ WORST_MIN_VEHICLES = 3
 class Match:
     direction: str
     along: float
-    off: float
+    off: float  # from the main route
+    branch_off: float | None = None  # from the nearest branch shape, None without branches
+
+    @property
+    def on_branch(self) -> bool:
+        """Off the main route but on one of the direction's branches (line 4 to Stn. Nové Mesto)."""
+        return self.off > OFF_ROUTE_M and self.branch_off is not None and self.branch_off <= OFF_ROUTE_M
 
 
 @dataclass
@@ -42,8 +48,8 @@ def derive_poll(snap: Snapshot, static: Static | None) -> Derived:
         az = v.azimuth if v.azimuth is not None else snap.moved_bearing.get(v.key)
         m = static.match_direction(v.line, v.dest, v.lon, v.lat, az)
         if m is not None:
-            dr, along, off = m
-            out.matches[v.key] = Match(dr.id, along, off)
+            dr, along, off, branch_off = m
+            out.matches[v.key] = Match(dr.id, along, off, branch_off)
     return out
 
 
@@ -75,7 +81,9 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                 {
                     "key": v.key,
                     "along": round(m.along),
-                    "offRoute": m.off > OFF_ROUTE_M,
+                    "offRoute": m.off > OFF_ROUTE_M and not m.on_branch,
+                    # On a branch the vehicle's `along` is only its nearest point on the main route.
+                    "onBranch": m.on_branch,
                     "delay": v.delay_s,
                     "stale": is_stale(v, snap, now),
                     "dest": v.dest,
@@ -86,8 +94,9 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
         vehicles.sort(key=lambda x: x["along"])
         # Gap from each vehicle to the next one ahead of it on the route.
         # Parked vehicles (depots beside the route, broken-down buses) aren't part of the service:
-        # they stay in the list but get no gaps and don't count in the summary.
-        running = [x for x in vehicles if not x["offRoute"] and not x["stale"]]
+        # they stay in the list but get no gaps and don't count in the summary. Neither do vehicles
+        # on a branch, whose position along the main route is only approximate.
+        running = [x for x in vehicles if not x["offRoute"] and not x["onBranch"] and not x["stale"]]
         for behind, ahead in zip(running, running[1:]):
             dist = ahead["along"] - behind["along"]
             secs = round(dist / speed) if speed else None
@@ -116,6 +125,7 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                 "duration": dr.duration,
                 "interval": interval,
                 "coords": dr.coords,
+                "branches": dr.branches,
                 "stops": [
                     {
                         "id": s,
@@ -132,9 +142,11 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                     "medianDelay": int(statistics.median(delays)) if delays else None,
                     "gaps": sum(1 for x in running if x.get("gapAhead", {}).get("flag") == "gap"),
                     "bunched": sum(1 for x in running if x.get("gapAhead", {}).get("flag") == "bunched"),
-                    # The biggest flagged gap, named by the last stop the vehicle ahead has passed.
+                    # The biggest flagged gap: it lies between the last stop passed by the vehicle
+                    # behind it (fromStop) and the last stop passed by the vehicle ahead (afterStop).
                     "biggestGap": {
                         "s": biggest["gapAhead"]["s"],
+                        "fromStop": static.stops[dr.stops[biggest["lastStop"]]]["name"],
                         "afterStop": static.stops[dr.stops[_ahead_of(running, biggest)["lastStop"]]]["name"],
                     }
                     if biggest
@@ -166,7 +178,7 @@ def city_status(snap: Snapshot, derived: Derived, static: Static | None, now: da
 
     def running(v: Vehicle) -> bool:
         m = derived.matches.get(v.key)
-        return v.line is not None and not is_stale(v, snap, now) and (m is None or m.off <= OFF_ROUTE_M)
+        return v.line is not None and not is_stale(v, snap, now) and (m is None or m.off <= OFF_ROUTE_M or m.on_branch)
 
     in_service = [v for v in snap.vehicles if running(v)]
     by_type = Counter(v.type for v in in_service)

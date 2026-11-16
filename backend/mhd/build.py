@@ -7,11 +7,15 @@ It writes <data>/static/ and only rebuilds when the GTFS feed_version changes (o
     meta.json     feed version, build time, OSM timestamp, routing fallbacks per line
     lines.json    every line: type, colours, directions (headsigns, stop ids, stop distances).
                   Direction ids are DPB's direction_id ("0", "1"), plus "0-2", "1-3"… for the
-                  legs of loop lines and for branches that leave the main route
-    shapes.json   {line: {direction: [[lon, lat], ...]}} street-following geometry
+                  legs of loop lines and for branches that leave the main route to another
+                  headsign. refStop is the index of the stop the departures are timed at
+    shapes.json   {line: {direction: [[lon, lat], ...]}} street-following geometry of the main pattern
+    branches.json {line: {direction: [[[lon, lat], ...], ...]}} extra shapes of branches that end at
+                  the direction's headsign (line 4 from Stn. Nové Mesto); only directions with any
     stops.json    every stop: name, position, lines serving it
-    service.json  calendar (weekday pattern, date range, exceptions) and first-stop departures
-                  per line, direction and service, in seconds after midnight
+    service.json  calendar (weekday pattern, date range, exceptions) and departures at each
+                  direction's reference stop per line, direction and service, in seconds after
+                  midnight
 """
 
 from __future__ import annotations
@@ -103,17 +107,18 @@ def build(gtfs: dict, osm: dict) -> dict:
     routes = {r["route_id"]: r for r in gtfs["routes"]}
     stops = {s["stop_id"]: s for s in gtfs["stops"]}
 
-    # Stop sequence and first departure of every trip.
-    seq: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    # Stop sequence with departure times, first departure and last arrival of every trip.
+    seq: dict[str, list[tuple[int, str, int | None]]] = defaultdict(list)
     first_dep: dict[str, tuple[int, int]] = {}
     last_arr: dict[str, tuple[int, int]] = {}
     for st in gtfs["stop_times"]:
         tid = st["trip_id"]
         n = int(st["stop_sequence"])
-        seq[tid].append((n, st["stop_id"]))
         dep = st["departure_time"] or st["arrival_time"]
+        dep_s = _secs(dep) if dep else None
+        seq[tid].append((n, st["stop_id"], dep_s))
         if dep and (tid not in first_dep or n < first_dep[tid][0]):
-            first_dep[tid] = (n, _secs(dep))
+            first_dep[tid] = (n, dep_s)
         arr = st["arrival_time"] or st["departure_time"]
         if arr and (tid not in last_arr or n > last_arr[tid][0]):
             last_arr[tid] = (n, _secs(arr))
@@ -126,10 +131,13 @@ def build(gtfs: dict, osm: dict) -> dict:
             continue
         groups[(r["route_short_name"], t["direction_id"] or "0")].append(t)
 
-    pattern = {tid: tuple(s for _, s in sorted(v)) for tid, v in seq.items()}
+    for v in seq.values():
+        v.sort(key=lambda x: x[0])
+    pattern = {tid: tuple(s for _, s, _ in v) for tid, v in seq.items()}
     lonlat = {s: (float(v["stop_lon"]), float(v["stop_lat"])) for s, v in stops.items()}
     lines: dict[str, dict] = {}
     shapes: dict[str, dict[str, list]] = defaultdict(dict)
+    branches: dict[str, dict[str, list]] = defaultdict(dict)
     departures: dict[str, dict[str, dict[str, list[int]]]] = defaultdict(lambda: defaultdict(dict))
     stop_lines: dict[str, set[str]] = defaultdict(set)
     fallbacks: dict[str, int] = {}
@@ -151,8 +159,10 @@ def build(gtfs: dict, osm: dict) -> dict:
     for (line, did), trips in sorted(groups.items()):
         r = routes[trips[0]["route_id"]]
         mode = ROUTE_TYPES.get(r["route_type"], "bus")
+        if any(k[0] != line for k in graphs):  # graphs are per line and each holds the whole network
+            graphs.clear()
         for t in trips:
-            for _, s in seq[t["trip_id"]]:
+            for s in pattern[t["trip_id"]]:
                 stop_lines[s].add(line)
         by_pat: dict[tuple[str, ...], list[dict]] = defaultdict(list)
         for t in trips:
@@ -162,7 +172,7 @@ def build(gtfs: dict, osm: dict) -> dict:
         clusters: list[dict] = []
         for p in pats:  # patterns common enough to be a direction, running unlike the ones so far
             if (
-                len(set(p)) >= 3
+                len(set(p)) >= 2
                 and (not clusters or len(by_pat[p]) >= MIN_SHARE * len(trips))
                 and all(_order_score(c["pos"], p) <= 0 for c in clusters)
             ):
@@ -172,7 +182,7 @@ def build(gtfs: dict, osm: dict) -> dict:
             if best is not None and p not in best["pats"] and _order_score(best["pos"], p) > 0:
                 best["pats"].append(p)
 
-        n = 0
+        cands = []
         for c in clusters:
             coords, stop_dist, fb = route(line, mode, c["main"])
             poly = Polyline(coords)
@@ -180,20 +190,37 @@ def build(gtfs: dict, osm: dict) -> dict:
                 continue
             out = [{"main": c["main"], "coords": coords, "stopDist": stop_dist, "fb": fb, "pats": c["pats"]}]
             # A common variant with stops away from the main shape (line 4's Stn. Nové Mesto
-            # terminal) is drawn as a branch of its own. Other variants' stops are not placed.
+            # terminal) gets a shape of its own. Other variants' stops are not placed.
             ctrips = sum(len(by_pat[p]) for p in c["pats"])
             for p in c["pats"][1:]:
                 if len(by_pat[p]) >= MIN_SHARE * ctrips and max(poly.project(*lonlat[s])[1] for s in p) > BRANCH_OFF_M:
                     bc, bd, bfb = route(line, mode, p)
                     out[0]["pats"] = [q for q in out[0]["pats"] if q != p]
                     out.append({"main": p, "coords": bc, "stopDist": bd, "fb": bfb, "pats": [p]})
-            for d in out:
-                n += 1
-                d["id"] = did if n == 1 else f"{did}-{n}"
-                d["trips"] = [t for q in d["pats"] for t in by_pat[q]]
-                d["route"] = r
-                d["mode"] = mode
-                line_dirs[line].append(d)
+            cands.extend(out)
+
+        # Groups that end at the same headsign or final stop are one direction (line 4's trams
+        # from Zlaté piesky and from Stn. Nové Mesto both run to Pri kríži): the group with most
+        # trips is its main pattern, the others are branch shapes drawn beside it.
+        merged: list[list[dict]] = []
+        for d in cands:
+            d["trips"] = [t for q in d["pats"] for t in by_pat[q]]
+            d["headsign"] = Counter(t["trip_headsign"] for t in by_pat[d["main"]]).most_common(1)[0][0]
+            d["end"] = stops[d["main"][-1]]["stop_name"]
+            same = next((m for m in merged if any(d["headsign"] == e["headsign"] or d["end"] == e["end"] for e in m)), None)
+            if same is None:
+                merged.append([d])
+            else:
+                same.append(d)
+        for n, m in enumerate(merged, 1):
+            m.sort(key=lambda e: -len(e["trips"]))
+            d = {**m[0], "branches": [e["coords"] for e in m[1:]], "fb": sum(e["fb"] for e in m)}
+            d["pats"] = [q for e in m for q in e["pats"]]
+            d["trips"] = [t for e in m for t in e["trips"]]
+            d["id"] = did if n == 1 else f"{did}-{n}"
+            d["route"] = r
+            d["mode"] = mode
+            line_dirs[line].append(d)
 
     for line, dirs in line_dirs.items():
         # A headsign belongs to the direction with most of its trips, and also to any direction
@@ -209,12 +236,18 @@ def build(gtfs: dict, osm: dict) -> dict:
             did = d["id"]
             fallbacks[line] = fallbacks.get(line, 0) + d["fb"]
             shapes[line][did] = [[round(x, 6), round(y, 6)] for x, y in d["coords"]]
+            if d["branches"]:
+                branches[line][did] = [[[round(x, 6), round(y, 6)] for x, y in b] for b in d["branches"]]
             main_trips = [t for t in d["trips"] if pattern[t["trip_id"]] == main]
-            # Interval departures only from trips leaving the main origin: one stream of vehicles.
             origin = stops[main[0]]["stop_name"]
+            # Interval departures at one reference stop: the main-pattern stop passed by most of the
+            # direction's trips, branches and trips starting partway along included.
+            served = Counter(s for t in d["trips"] for s in set(pattern[t["trip_id"]]))
+            ref = max(range(len(main)), key=lambda i: (served[main[i]], -i))
             for t in d["trips"]:
-                if t["trip_id"] in first_dep and stops[pattern[t["trip_id"]][0]]["stop_name"] == origin:
-                    departures[line][did].setdefault(t["service_id"], []).append(first_dep[t["trip_id"]][1])
+                dep = next((x for _, s, x in seq[t["trip_id"]] if s == main[ref]), None)
+                if dep is not None:
+                    departures[line][did].setdefault(t["service_id"], []).append(dep)
             info = lines.setdefault(
                 line,
                 {
@@ -235,6 +268,8 @@ def build(gtfs: dict, osm: dict) -> dict:
                 "length": round(Polyline(d["coords"]).length),
                 # Median scheduled run time of the main pattern, used to turn distance gaps into time.
                 "duration": _median_duration(main_trips, first_dep, last_arr),
+                # Index in `stops` of the stop the interval departures are timed at.
+                "refStop": ref,
             }
 
     for line in departures:
@@ -283,6 +318,7 @@ def build(gtfs: dict, osm: dict) -> dict:
         "meta": meta,
         "lines": dict(sorted(lines.items(), key=lambda kv: _line_sort_key(kv[0]))),
         "shapes": shapes,
+        "branches": branches,
         "stops": out_stops,
         "service": {"calendar": calendar, "departures": departures},
     }
@@ -325,7 +361,7 @@ def _line_sort_key(line: str) -> tuple:
 def write(out: dict, static_dir: Path) -> None:
     static_dir.mkdir(parents=True, exist_ok=True)
     # meta.json last: the app reloads when it changes, so the other files must already be new.
-    for name in ("lines", "shapes", "stops", "service", "meta"):
+    for name in ("lines", "shapes", "branches", "stops", "service", "meta"):
         tmp = static_dir / f".{name}.json.tmp"
         tmp.write_text(json.dumps(out[name], ensure_ascii=False, separators=(",", ":")))
         os.replace(tmp, static_dir / f"{name}.json")
