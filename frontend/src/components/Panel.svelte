@@ -7,7 +7,18 @@
     header,
     children,
     tall = false,
-  }: { label: string; header: Snippet; children: Snippet; tall?: boolean } = $props()
+    expand = false,
+    onback,
+  }: {
+    label: string
+    header: Snippet
+    children: Snippet
+    tall?: boolean
+    /** Keep the phone sheet at full height (e.g. while a text field has focus). */
+    expand?: boolean
+    /** Replaces the history back of the back button (and shows it) when set. */
+    onback?: { label: string; go: () => void }
+  } = $props()
 
   let section: HTMLElement
   // Keyboard focus moves into every panel that opens; closePanel() returns it to the opener.
@@ -30,7 +41,7 @@
   }
 </script>
 
-<section class="panel" class:expanded class:tall aria-label={label} tabindex="-1" bind:this={section}>
+<section class="panel" class:expanded={expanded || expand} class:tall aria-label={label} tabindex="-1" bind:this={section}>
   <!-- The handle button is the accessible control; the swipe area is a touch shortcut for it. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="sheet-top" onpointerdown={down} onpointerup={up} onpointercancel={() => (startY = null)}>
@@ -41,9 +52,14 @@
       aria-expanded={expanded}
     ></button>
     <header>
-      {#if app.canBack}
+      {#if onback || app.canBack}
         <!-- Returns to the panel this one was opened from (e.g. the plan behind a vehicle). -->
-        <button class="close back" onclick={() => history.back()} aria-label="Späť">
+        <button
+          class="close back"
+          onclick={() => (onback ? onback.go() : history.back())}
+          aria-label={onback?.label ?? 'Späť'}
+          title={onback?.label ?? 'Späť'}
+        >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
             ><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg
           >

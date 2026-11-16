@@ -200,8 +200,6 @@
       }
       for (const [role, val] of [['from', v.from], ['to', v.to]] as const) {
         // Before the first result, the destination is where the user put it; after, where the trip ends.
-        // A trip that starts with a ride has its boarding stop marker at the origin instead.
-        if (role === 'from' && o?.legs[0]?.kind === 'ride') continue
         const end = role === 'from' ? o?.legs[0]?.from : o?.legs.at(-1)?.to
         const c = end ? [end.lon, end.lat] : placeCoords(val)
         if (c) ends.push({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: c }, properties: { role, name: placeLabel(val) } })

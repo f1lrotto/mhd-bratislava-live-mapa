@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayText, durationText, fromLocalInput, hm, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
   import { firstTrip, placeLabel, pointValue, setPlanEnd } from '../lib/places'
   import { app, navigate } from '../lib/state.svelte'
-  import type { PlanOption, RideLeg } from '../lib/types'
+  import type { PlanOption, PlanReason, RideLeg } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
   import PlaceInput from './PlaceInput.svelte'
@@ -16,6 +16,91 @@
   const options = $derived(plan?.data?.options ?? [])
   const sel = $derived(opt != null ? (options[Math.min(opt, options.length - 1)] ?? null) : null)
   const now = $derived(app.tick + app.skewMs)
+  const reason = $derived(plan?.data?.reason ?? null)
+
+  // --- the form: on phones it folds into one summary line once both ends are set ------------------
+  let fromInput = $state<HTMLInputElement>()
+  let toInput = $state<HTMLInputElement>()
+  let inputFocus = $state(false)
+  let formOpen = $state(false)
+  let keepOpen = false
+  const collapsed = $derived(!!from && !!to && !formOpen && !inputFocus)
+  // The phone sheet grows when a field gets focus and stays up until the form folds, so tapping
+  // a chip right after typing doesn't hit a sheet that is shrinking under the finger.
+  let sheetUp = $state(false)
+  $effect(() => {
+    if (inputFocus) sheetUp = true
+  })
+  $effect(() => {
+    if (collapsed) sheetUp = false
+  })
+
+  // A new end (picked, located, tapped on the map) folds the form again; a swap keeps it open.
+  // (Props re-run effects on any view change, so compare with the last ends seen.)
+  let lastEnds = untrack(() => `${from}|${to}`)
+  $effect(() => {
+    const ends = `${from}|${to}`
+    if (ends === lastEnds) return
+    lastEnds = ends
+    untrack(() => {
+      if (keepOpen) keepOpen = false
+      else formOpen = false
+    })
+  })
+
+  // Opened with one end set ("Trasa odtiaľto" / "Trasa sem"): start typing the other one.
+  onMount(() => {
+    if (opt == null && !!from !== !!to) (from ? toInput : fromInput)?.focus()
+  })
+
+  function picked(end: 'from' | 'to', code: string) {
+    setPlanEnd(end, code)
+    const other = end === 'from' ? to : from
+    // The empty end is next; with both set, close the keyboard and show the results.
+    if (!other) (end === 'from' ? toInput : fromInput)?.focus()
+    else (document.activeElement as HTMLElement | null)?.blur()
+  }
+
+  async function editForm() {
+    formOpen = true
+    await tick()
+    fromInput?.focus()
+  }
+
+  // --- departure time: Bratislava calendar days -----------------------------------------------------
+  const DAY_MS = 86_400_000
+  const today = $derived(toLocalInput(new Date(now).toISOString()).slice(0, 10))
+  const tomorrow = $derived(new Date(Date.parse(today) + DAY_MS).toISOString().slice(0, 10))
+  const atDate = $derived(at ? toLocalInput(at).slice(0, 10) : null)
+  const atTime = $derived(at ? toLocalInput(at).slice(11, 16) : '')
+
+  function dayWord(iso: string | null): string {
+    if (!iso) return 'teraz'
+    const d = toLocalInput(iso).slice(0, 10)
+    return `${d === today ? 'dnes' : d === tomorrow ? 'zajtra' : dayText(iso)} ${hm(iso)}`
+  }
+
+  function setDay(date: string) {
+    // Keep the chosen time; without one, the next full 5 minutes.
+    const time = atTime || toLocalInput(new Date(Math.ceil((now + 60_000) / 300_000) * 300_000).toISOString()).slice(11, 16)
+    setAt(fromLocalInput(`${date}T${time}`))
+  }
+
+  let timeText = $state('')
+  $effect(() => {
+    timeText = atTime
+  })
+  let timeError = $state(false)
+  function commitTime() {
+    const m = /^\s*(\d{1,2})(?:[:.\s]?(\d{2}))?\s*$/.exec(timeText)
+    const h = m ? +m[1] : NaN
+    const min = m?.[2] ? +m[2] : 0
+    timeError = !(h >= 0 && h <= 23 && min >= 0 && min <= 59)
+    if (timeError || !atDate) return
+    const v = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
+    timeText = v
+    if (v !== atTime) setAt(fromLocalInput(`${atDate}T${v}`))
+  }
 
   // Departing now: refresh every 30 s while open. A fixed time is fetched once (and on return
   // from a vehicle only if the cached result is for another query or failed).
@@ -80,6 +165,7 @@
   }
 
   function swap() {
+    keepOpen = true
     navigate({ kind: 'plan', from: to, to: from, at, opt: null }, { replace: true })
   }
 
@@ -87,15 +173,26 @@
     navigate({ kind: 'plan', from, to, at: v, opt: null }, { replace: true })
   }
 
-  function later() {
-    // The next full 5 minutes, in Bratislava time.
-    const ms = Math.ceil((now + 60_000) / 300_000) * 300_000
-    setAt(fromLocalInput(toLocalInput(new Date(ms).toISOString())))
+  // A card opens an option as a new history entry (system back returns to the list); the tabs
+  // between options and the panel's back control replace it.
+  let sumEl = $state<HTMLElement>()
+  async function select(i: number | null, fromCard = false) {
+    navigate({ kind: 'plan', from, to, at, opt: i }, { replace: !fromCard })
+    if (!fromCard) return
+    await tick()
+    sumEl?.focus()
   }
 
-  function select(i: number | null) {
-    navigate({ kind: 'plan', from, to, at, opt: i }, { replace: i == null })
+  function backToList() {
+    if ((history.state as { prev?: string } | null)?.prev === 'plan') history.back()
+    else select(null)
   }
+
+  // Each option starts at the top of the panel.
+  $effect(() => {
+    void opt
+    untrack(() => document.querySelector('.panel .body')?.scrollTo({ top: 0 }))
+  })
 
   const rides = (o: PlanOption) => o.legs.filter((l): l is RideLeg => l.kind === 'ride')
   const isLive = (o: PlanOption) => rides(o).some((l) => l.vehicle || l.delay != null)
@@ -107,6 +204,23 @@
     if (at) return null
     const m = minsUntil(iso, now)
     return m < 1 ? 'teraz' : m < 60 ? `o ${m} min` : null
+  }
+
+  const REASONS: Record<PlanReason, string> = {
+    same_place: 'Začiatok a cieľ sú na rovnakom mieste.',
+    no_stops_near_origin: 'Pri začiatku nie je na pešiu vzdialenosť žiadna zastávka MHD. Vyberte iné miesto.',
+    no_stops_near_destination: 'Pri cieli nie je na pešiu vzdialenosť žiadna zastávka MHD. Vyberte iné miesto.',
+    no_connection: '',
+  }
+  const noConnection = $derived(
+    `Nenašli sme spojenie${at ? ` na ${dayWord(at)}` : ' v najbližšom čase'}. Skúste iný čas alebo blízku zastávku.`,
+  )
+  const reasonText = $derived(reason ? REASONS[reason] || noConnection : noConnection)
+
+  /** Wait between arriving at a leg's stop (by a ride or a walk) and its ride leaving, in minutes. */
+  function waitMin(o: PlanOption, i: number): number {
+    const prev = o.legs[i - 1]
+    return prev ? Math.max(0, Math.round((Date.parse(o.legs[i].start) - Date.parse(prev.end)) / 60000)) : 0
   }
 
   function errorText(e: string): string {
@@ -134,24 +248,32 @@
       {#if l.kind === 'ride'}
         <LineBadge line={l.line} size="sm" />
       {:else}
-        <span class="walk-chip" aria-label="pešo {l.m} m">{@render walkIcon()}<span class="small">{walkMin(l.start, l.end)}</span></span>
+        <span class="walk-chip" role="img" aria-label="pešo {walkMin(l.start, l.end)} min, {l.m} m"
+          >{@render walkIcon()}<span class="small" aria-hidden="true">{walkMin(l.start, l.end)} min</span></span
+        >
       {/if}
     {/each}
   </span>
 {/snippet}
 
-<Panel tall label="Trasa">
+<Panel
+  tall
+  label="Trasa"
+  expand={sheetUp && !collapsed && !sel}
+  onback={sel ? { label: 'Všetky možnosti', go: backToList } : undefined}
+>
   {#snippet header()}
     <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
     <strong>Trasa</strong>
   {/snippet}
 
   {#if sel}
-    <!-- One option: compact ends, the other options as tabs, and the timeline. -->
-    <button class="back-list" onclick={() => select(null)}>
-      <span aria-hidden="true">‹</span> Všetky možnosti
-    </button>
-    <p class="ends">{placeLabel(from)} <span aria-hidden="true">→</span><span class="sr">do</span> {placeLabel(to)}</p>
+    <!-- One option: compact ends, the other options as tabs, and the timeline. The panel's back
+         button (and Esc) return to the list. -->
+    <p class="ends">
+      {placeLabel(from)} <span aria-hidden="true">→</span><span class="sr">do</span> {placeLabel(to)}
+      <span class="muted small">· {dayWord(at)}</span>
+    </p>
     {#if options.length > 1}
       <div class="opt-tabs" role="group" aria-label="Možnosť">
         {#each options as o, i (i)}
@@ -162,7 +284,7 @@
       </div>
     {/if}
     <div class="sum">
-      <strong class="big">{hm(sel.depart)} → {hm(sel.arrive)}</strong>
+      <h2 class="big" tabindex="-1" bind:this={sumEl}>{hm(sel.depart)} → {hm(sel.arrive)}</h2>
       <span class="muted">{durationText(sel.duration)} · {rides(sel).length ? transfersText(sel.transfers) : 'len pešo'}{sel.walkM ? ` · ${sel.walkM} m pešo` : ''}</span>
     </div>
 
@@ -187,7 +309,7 @@
           {@const mid = l.stops.slice(1, -1)}
           <li class="leg ride-leg" style:--c={l.color}>
             <span class="t"><strong>{hm(l.start)}</strong></span>
-            <span class="rail" aria-hidden="true"><span class="dot" class:ring={transfer}></span></span>
+            <span class="rail" aria-hidden="true"><span class="dot" class:ring={transfer} class:origin={i === 0}></span></span>
             <div class="leg-body">
               <div class="stop-name">
                 {#if l.from.station}
@@ -196,6 +318,11 @@
                 {#if l.from.platform}<span class="plat">{l.from.platform}</span>{/if}
                 {#if transfer}<span class="muted small">prestup</span>{/if}
               </div>
+              {#if i > 0 && (sel.legs[i - 1].kind === 'ride' || waitMin(sel, i) > 0)}
+                <span class="muted small">
+                  {#if sel.legs[i - 1].kind === 'ride'}príchod {hm(sel.legs[i - 1].end)}{' · '}{/if}čakanie {waitMin(sel, i)} min
+                </span>
+              {/if}
               <div class="ride">
                 <LineBadge line={l.line} />
                 <span class="hs">→ {l.headsign}</span>
@@ -248,10 +375,22 @@
       {/if}
     </ol>
   {:else}
+    {#if collapsed}
+      <button class="summary-line" onclick={editForm} aria-label="Upraviť: {placeLabel(from)} do {placeLabel(to)}, {dayWord(at)}">
+        <span class="sl-text"><strong>{placeLabel(from)} → {placeLabel(to)}</strong> <span class="muted">· {dayWord(at)}</span></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" /></svg>
+      </button>
+    {/if}
+    <div
+      class="form-wrap"
+      class:collapsed
+      onfocusin={(e) => (inputFocus = (e.target as HTMLElement).tagName === 'INPUT')}
+      onfocusout={() => (inputFocus = false)}
+    >
     <div class="form">
       <div class="ends-form">
-        <PlaceInput end="from" label="Odkiaľ" value={from} onpick={(c) => setPlanEnd('from', c)} onlocate={() => locate('from')} onmap={() => pickOnMap('from')} />
-        <PlaceInput end="to" label="Kam" value={to} onpick={(c) => setPlanEnd('to', c)} onlocate={() => locate('to')} onmap={() => pickOnMap('to')} />
+        <PlaceInput end="from" label="Odkiaľ" value={from} bind:input={fromInput} onpick={(c) => picked('from', c)} onlocate={() => locate('from')} onmap={() => pickOnMap('from')} />
+        <PlaceInput end="to" label="Kam" value={to} bind:input={toInput} onpick={(c) => picked('to', c)} onlocate={() => locate('to')} onmap={() => pickOnMap('to')} />
       </div>
       <button class="swap" onclick={swap} aria-label="Vymeniť začiatok a cieľ" title="Vymeniť" disabled={!from && !to}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16M8 4L4.5 7.5M8 4l3.5 3.5M16 20V4M16 20l-3.5-3.5M16 20l3.5-3.5" /></svg>
@@ -262,18 +401,29 @@
 
     <div class="when" role="group" aria-label="Čas odchodu">
       <button class:active={!at} aria-pressed={!at} onclick={() => setAt(null)}>Teraz</button>
-      <button class:active={!!at} aria-pressed={!!at} onclick={() => !at && later()}>Odchod o…</button>
-      {#if at}
-        <input
-          type="datetime-local"
-          aria-label="Dátum a čas odchodu"
-          value={toLocalInput(at)}
-          onchange={(e) => {
-            const v = fromLocalInput((e.currentTarget as HTMLInputElement).value)
-            if (v) setAt(v)
-          }}
-        />
+      <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>Dnes</button>
+      <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>Zajtra</button>
+      {#if at && atDate !== today && atDate !== tomorrow}
+        <button class="active" aria-pressed="true">{dayText(at)}</button>
       {/if}
+      {#if at}
+        <label class="time" class:bad={timeError}>
+          <span>o</span>
+          <input
+            type="text"
+            inputmode="numeric"
+            maxlength="5"
+            placeholder="08:00"
+            aria-label="Čas odchodu (hh:mm)"
+            aria-invalid={timeError}
+            bind:value={timeText}
+            onchange={commitTime}
+            onkeydown={(e) => e.key === 'Enter' && commitTime()}
+          />
+        </label>
+      {/if}
+    </div>
+    {#if timeError}<p class="note error">Čas zadajte ako hh:mm, napríklad 08:05.</p>{/if}
     </div>
 
     {#if !from || !to}
@@ -285,13 +435,16 @@
     {:else if plan.error && !plan.data}
       <p class="note error">{errorText(plan.error)}</p>
     {:else if !options.length}
-      <p class="empty">Nenašli sme spojenie{at ? ` na ${dayText(at)} ${hm(at)}` : ' v najbližšom čase'}. Skúste iný čas alebo blízku zastávku.</p>
+      <p class="empty">{reasonText}</p>
     {:else}
+      {#if reason === 'no_connection'}
+        <p class="note">Spojenie MHD{at ? ` na ${dayWord(at)}` : ''} sme nenašli, dá sa však ísť pešo.</p>
+      {:else if reason}<p class="note">{reasonText}</p>{/if}
       <ul class="cards">
         {#each options as o, i (i)}
           {@const first = rides(o)[0]}
           <li>
-            <button class="card" class:drawn={i === 0} onclick={() => select(i)} aria-label="Možnosť {i + 1}: {hm(o.depart)} až {hm(o.arrive)}, {durationText(o.duration)}">
+            <button class="card" class:drawn={i === 0} onclick={() => select(i, true)} aria-label="Možnosť {i + 1}: {hm(o.depart)} až {hm(o.arrive)}, {durationText(o.duration)}">
               <span class="card-top">
                 <strong class="times">{hm(o.depart)} → {hm(o.arrive)}</strong>
                 <span class="dur">{durationText(o.duration)}</span>
@@ -385,14 +538,65 @@
     background: var(--text);
     color: #fff;
   }
-  .when input {
+  .time {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .time input {
+    width: 4.2em;
     height: 34px;
     border-radius: 8px;
     border: 1.5px solid #d4d8dd;
     padding: 0 8px;
     font: inherit;
     font-size: 16px;
-    min-width: 0;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .time input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .time.bad input {
+    border-color: var(--bad);
+  }
+  .summary-line {
+    display: none;
+  }
+  @media (max-width: 767.98px) {
+    .form-wrap.collapsed {
+      display: none;
+    }
+    .summary-line {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 46px;
+      padding: 8px 12px;
+      border-radius: 12px;
+      background: var(--chip);
+      text-align: left;
+    }
+    .summary-line:hover {
+      background: var(--hover);
+    }
+    .sl-text {
+      flex: 1;
+      min-width: 0;
+      line-height: 1.3;
+    }
+    .summary-line svg {
+      flex: none;
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linejoin: round;
+    }
   }
   .cards {
     list-style: none;
@@ -490,11 +694,6 @@
     color: var(--muted);
     text-align: center;
   }
-  .back-list {
-    color: var(--accent);
-    font-weight: 600;
-    padding: 4px 0;
-  }
   .ends {
     margin: 2px 0 8px;
     font-weight: 600;
@@ -520,12 +719,16 @@
     background: var(--text);
     color: #fff;
   }
+  .big:focus {
+    outline: none;
+  }
   .sum {
     display: flex;
     flex-direction: column;
     margin-bottom: 10px;
   }
   .big {
+    margin: 0;
     font-size: 1.2rem;
     font-variant-numeric: tabular-nums;
   }
@@ -584,6 +787,11 @@
     background: #fff;
     border: 4px solid var(--c, var(--text));
     box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--text);
+  }
+  .dot.origin {
+    background: #fff;
+    border: 4px solid var(--text);
+    box-shadow: 0 0 0 2px #fff;
   }
   .dot.flag {
     background: var(--bad);

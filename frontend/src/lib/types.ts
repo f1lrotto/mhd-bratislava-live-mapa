@@ -164,9 +164,12 @@ export interface PlanOption {
   legs: (WalkLeg | RideLeg)[]
 }
 
+export type PlanReason = 'same_place' | 'no_stops_near_origin' | 'no_stops_near_destination' | 'no_connection'
+
 export interface Plan {
   live: boolean
   options: PlanOption[]
+  reason?: PlanReason | null
 }
 
 export interface Gap {

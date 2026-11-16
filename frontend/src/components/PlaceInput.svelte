@@ -10,6 +10,7 @@
     onpick,
     onlocate,
     onmap,
+    input = $bindable(),
   }: {
     end: 'from' | 'to'
     label: string
@@ -17,6 +18,7 @@
     onpick: (code: string) => void
     onlocate: () => void
     onmap: () => void
+    input?: HTMLInputElement
   } = $props()
 
   let query = $state('')
@@ -56,6 +58,7 @@
 <div class="field">
   <span class="mark {end}" aria-hidden="true"></span>
   <input
+    bind:this={input}
     type="text"
     placeholder={end === 'from' ? 'Odkiaľ' : 'Kam'}
     aria-label={label}

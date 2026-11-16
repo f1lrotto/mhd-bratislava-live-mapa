@@ -35,6 +35,8 @@
       if (e.key !== 'Escape') return
       // Esc first cancels picking a point on the map, then closes the panel.
       if (app.pick) app.pick = null
+      // In one planner option, Esc first returns to the list of options.
+      else if (app.view.kind === 'plan' && app.view.opt != null) navigate({ ...app.view, opt: null }, { replace: true })
       else if (app.view.kind !== 'none') closePanel()
     }
     addEventListener('popstate', onPop)
@@ -376,7 +378,27 @@
       display: none;
     }
     nav button {
-      padding: 0 12px;
+      min-width: 40px;
+      padding: 0 8px;
+      justify-content: center;
+    }
+    .fresh {
+      padding: 0 10px;
+      gap: 6px;
+      font-size: 0.8rem;
+    }
+  }
+  /* The narrowest phones keep only the freshness dot; its title and colour still tell the state. */
+  @media (max-width: 379.98px) {
+    .fresh-text {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+    }
+    .fresh {
+      padding: 0 14px;
     }
   }
 </style>
