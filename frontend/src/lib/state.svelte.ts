@@ -103,7 +103,14 @@ export function buildUrl(view: View, filters: Filters): string {
 }
 
 /** Change the view, recording it in the URL and browser history. */
+/** The control that opened the first panel (a nav button, or the map), for returning focus. */
+let opener: HTMLElement | null = null
+
 export function navigate(view: View, opts: { replace?: boolean } = {}): void {
+  if (app.view.kind === 'none' && view.kind !== 'none') {
+    const a = document.activeElement as HTMLElement | null
+    opener = a && a !== document.body ? a : (document.querySelector('.maplibregl-canvas') as HTMLElement | null)
+  }
   app.view = view
   syncUrl(opts.replace)
 }
@@ -122,6 +129,9 @@ function syncUrl(replace = false): void {
 
 export function closePanel(): void {
   navigate({ kind: 'none' })
+  const target = opener?.isConnected ? opener : (document.querySelector('.maplibregl-canvas') as HTMLElement | null)
+  target?.focus({ preventScroll: true })
+  opener = null
 }
 
 export function focusOn(lon: number, lat: number, zoom?: number): void {

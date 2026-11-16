@@ -7,7 +7,8 @@
   import StopPanel from './components/StopPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
-  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl } from './lib/state.svelte'
+  import { passes } from './lib/filter'
+  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
   const initial = parseUrl()
@@ -47,7 +48,8 @@
   })
   const selectedDir = $derived.by(() => {
     const v = app.view
-    if (v.kind === 'line') return v.dir
+    // With no direction in the URL the first one is shown, as in the panel and route overlay.
+    if (v.kind === 'line') return v.dir ?? (app.lineView?.line === v.line ? (app.lineView.directions[0]?.id ?? null) : null)
     if (v.kind === 'vehicle') return app.live?.vehicles.find((x) => x.key === v.key)?.dir ?? null
     return null
   })
@@ -125,7 +127,13 @@
   {/if}
 
   {#if app.view.kind === 'none' && app.live && !down}
-    <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>Vyberte vozidlo alebo linku</button>
+    {#if nFilters && !app.live.vehicles.some((v) => passes(v, app.filters))}
+      <button class="hint-pill" onclick={() => setFilters({ types: [], lines: [], late: false })}
+        >Filtre skryli všetky vozidlá · Zrušiť</button
+      >
+    {:else}
+      <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>Vyberte vozidlo alebo linku</button>
+    {/if}
   {/if}
 
   {#key app.view.kind === 'line' ? `line-${app.view.line}` : app.view.kind}

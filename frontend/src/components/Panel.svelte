@@ -10,14 +10,8 @@
   }: { label: string; header: Snippet; children: Snippet; tall?: boolean } = $props()
 
   let section: HTMLElement
-  // Move keyboard focus into the panel when it opens, and back to where it came from when it closes.
-  onMount(() => {
-    const opener = document.activeElement as HTMLElement | null
-    if (opener && opener !== document.body) section.focus({ preventScroll: true })
-    return () => {
-      if (opener?.isConnected && !document.querySelector('.panel')) opener.focus({ preventScroll: true })
-    }
-  })
+  // Keyboard focus moves into every panel that opens; closePanel() returns it to the opener.
+  onMount(() => section.focus({ preventScroll: true }))
 
   // On phones the panel is a bottom sheet: half height, or nearly full when expanded.
   let expanded = $state(false)

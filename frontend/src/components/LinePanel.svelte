@@ -10,18 +10,21 @@
   const lv = $derived(app.lineView?.line === line ? app.lineView : null)
   const info = $derived(app.lines[line])
   const current = $derived(lv?.directions.find((d) => d.id === dir) ?? lv?.directions[0] ?? null)
-  // Off-route vehicles have no meaningful position on the route; list them after the running ones.
-  const ordered = $derived(current ? [...current.vehicles.filter((v) => !v.offRoute), ...current.vehicles.filter((v) => v.offRoute)] : [])
+  // Running vehicles are on the ribbon and in the order list. Parked (position unchanged 10+ min)
+  // and off-route vehicles aren't part of the service right now, so they get their own list.
+  const running = $derived(current ? current.vehicles.filter((v) => !v.offRoute && !v.stale) : [])
+  const parked = $derived(current ? current.vehicles.filter((v) => v.offRoute || v.stale) : [])
   const AT_END_M = 250
   const dupHeadsign = (d: LineDirection) => (lv?.directions.filter((x) => x.headsign === d.headsign).length ?? 0) > 1
   const tabLabel = (d: LineDirection) => (dupHeadsign(d) ? `${d.from} → ${d.headsign}` : d.headsign)
-  // Dots closer than this share of the ribbon would overlap; lift the later one so both show.
-  const lifted = $derived.by(() => {
-    const out = new Set<string>()
+  // Dots closer than 4% of the ribbon would overlap; stack each cluster in rows so all show.
+  const row = $derived.by(() => {
+    const out = new Map<string, number>()
     if (!current) return out
-    const run = current.vehicles.filter((v) => !v.offRoute)
-    for (let i = 1; i < run.length; i++) {
-      if (!out.has(run[i - 1].key) && pct(current, run[i].along) - pct(current, run[i - 1].along) < 4) out.add(run[i].key)
+    let k = 0
+    for (let i = 0; i < running.length; i++) {
+      k = i > 0 && pct(current, running[i].along) - pct(current, running[i - 1].along) < 4 ? k + 1 : 0
+      out.set(running[i].key, Math.min(k, 2))
     }
     return out
   })
@@ -106,7 +109,7 @@
       </div>
     {/if}
 
-    <p class="summary">{summary(current)}.</p>
+    <p class="summary">{summary(current).replace(/\.?$/, '.')}</p>
     <p class="interval">
       {#if current.interval}
         Podľa cestovného poriadku teraz každých <strong class="nowrap">{minutes(current.interval)}</strong>
@@ -120,22 +123,21 @@
       {#each current.stops as s, i (i)}
         <div class="tick" class:end={i === 0 || i === current.stops.length - 1} style:left="{pct(current, s.dist)}%"></div>
       {/each}
-      {#each current.vehicles as v, i (v.key)}
-        {#if v.gapAhead?.flag && current.vehicles[i + 1]}
+      {#each running as v, i (v.key)}
+        {#if v.gapAhead?.flag && running[i + 1]}
           <div
             class="seg {v.gapAhead.flag}"
             style:left="{pct(current, v.along)}%"
-            style:width="{pct(current, current.vehicles[i + 1].along) - pct(current, v.along)}%"
+            style:width="{pct(current, running[i + 1].along) - pct(current, v.along)}%"
           ></div>
         {/if}
       {/each}
-      {#each current.vehicles.filter((v) => !v.offRoute) as v (v.key)}
+      {#each running as v (v.key)}
         <button
           class="dot"
-          class:stale={v.stale}
-          class:lift={lifted.has(v.key)}
           style:left="{pct(current, v.along)}%"
-          style:background={v.stale ? 'var(--stale)' : bandColor(delayBand(v.delay))}
+          style:top="{14 - 13 * (row.get(v.key) ?? 0)}px"
+          style:background={bandColor(delayBand(v.delay))}
           tabindex="-1"
           aria-label="Vozidlo {v.key}"
           onclick={() => openVehicle(v.key)}
@@ -147,20 +149,20 @@
       <span>{current.headsign}</span>
     </div>
 
-    {#if ordered.length}
+    {#if running.length}
       <h3 class="section">Poradie vozidiel od začiatku trasy</h3>
       <ol class="order">
-        {#each ordered as v, i (v.key)}
+        {#each running as v, i (v.key)}
           <li>
             <button class="row" onclick={() => openVehicle(v.key)}>
-              <span class="pip" style:background={v.stale ? 'var(--stale)' : bandColor(delayBand(v.delay))}></span>
+              <span class="pip" style:background={bandColor(delayBand(v.delay))}></span>
               <span class="row-main">
                 <span class="where">{where(current, v)}</span>
-                <span class="muted small">č. {v.key}{v.stale ? ' · poloha sa nemení' : ''}</span>
+                <span class="muted small">č. {v.key}</span>
               </span>
               <span class="delay" class:late={(v.delay ?? 0) >= 180}>{delayText(v.delay)}</span>
             </button>
-            {#if v.gapAhead && i < ordered.length - 1}
+            {#if v.gapAhead && i < running.length - 1}
               <div class="between {v.gapAhead.flag ?? ''}">
                 <span class="gap-line" aria-hidden="true"></span>
                 {#if v.gapAhead.s != null}≈{minutes(v.gapAhead.s)}{/if}
@@ -174,6 +176,24 @@
       </ol>
     {:else}
       <p class="note">V tomto smere teraz nejde žiadne vozidlo.</p>
+    {/if}
+
+    {#if parked.length}
+      <h3 class="section">Stojace alebo mimo trasy</h3>
+      <ul class="unmatched">
+        {#each parked as v (v.key)}
+          <li>
+            <button class="row" onclick={() => openVehicle(v.key)}>
+              <span class="pip" style:background="var(--stale)"></span>
+              <span class="row-main">
+                <span class="where">{v.offRoute ? 'mimo trasy' : where(current, v)}</span>
+                <span class="muted small">č. {v.key}{v.stale ? ' · poloha sa nemení 10+ min' : ''}</span>
+              </span>
+              <span class="delay muted">{delayText(v.delay)}</span>
+            </button>
+          </li>
+        {/each}
+      </ul>
     {/if}
 
     {#if lv.unmatched.length}
@@ -312,10 +332,6 @@
     border: 2.5px solid #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     padding: 0;
-  }
-  .dot.lift {
-    top: -4px;
-    box-shadow: 0 0 0 2px var(--warn), 0 1px 3px rgba(0, 0, 0, 0.35);
   }
   .ends {
     display: flex;

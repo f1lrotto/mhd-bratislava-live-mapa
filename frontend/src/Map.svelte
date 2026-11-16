@@ -80,7 +80,7 @@
       const dim = activeLine != null && v.line !== activeLine && !sel
       // On the active line, vehicles of the other directions stay visible but softer.
       const other = !dim && !sel && activeLine != null && selectedDir != null && v.dir != null && v.dir !== selectedDir
-      const hi = activeLine != null && !dim
+      const hi = activeLine != null && !dim && !other
       features.push({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: p },
