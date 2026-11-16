@@ -324,7 +324,8 @@ def _line_sort_key(line: str) -> tuple:
 
 def write(out: dict, static_dir: Path) -> None:
     static_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("meta", "lines", "shapes", "stops", "service"):
+    # meta.json last: the app reloads when it changes, so the other files must already be new.
+    for name in ("lines", "shapes", "stops", "service", "meta"):
         tmp = static_dir / f".{name}.json.tmp"
         tmp.write_text(json.dumps(out[name], ensure_ascii=False, separators=(",", ":")))
         os.replace(tmp, static_dir / f"{name}.json")
