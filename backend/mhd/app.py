@@ -22,7 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import derive, lineview
@@ -126,7 +126,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     def status():
         now = datetime.now(timezone.utc)
         snap = poller.snapshot
-        body = lineview.city_status(snap, current_static(), now)
+        body = lineview.city_status(snap, state["derived"], current_static(), now)
         body["feed"] = derive.feed_status(snap, now)
         try:
             body["history"] = history.status(now)
@@ -140,7 +140,20 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     app.mount("/api/static", StaticFiles(directory=static_dir), name="static-data")
 
     if FRONTEND_DIR.exists():
-        app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+        # Hashed build assets are immutable; every other path is the single-page app, so deep
+        # links such as /linka/83 or /vozidlo/1843 load index.html.
+        app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+        root = FRONTEND_DIR.resolve()
+
+        @app.get("/{path:path}", include_in_schema=False)
+        def spa(path: str):
+            f = (root / path).resolve()
+            if path and f.is_file() and f.is_relative_to(root):
+                headers = {"Cache-Control": "no-cache"} if f.name in ("sw.js", "manifest.webmanifest") else None
+                return FileResponse(f, headers=headers)
+            if path.startswith("api/"):
+                return JSONResponse({"error": "not found"}, status_code=404)
+            return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
 

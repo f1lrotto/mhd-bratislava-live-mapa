@@ -113,7 +113,39 @@ def test_city_status_worst_lines_need_three_vehicles(tmp_path):
     p = Poller(logger=None)
     lone = Vehicle("x", "39", "Y", "bus", 48.15, 17.1, 900, 2, None)
     p.apply([_bus("a", 100, 0), _bus("b", 200, 240), _bus("c", 300, 600), lone], MON_1630)
-    st = lineview.city_status(p.snapshot, s, MON_1630)
+    st = lineview.city_status(p.snapshot, lineview.derive_poll(p.snapshot, s), s, MON_1630)
     assert [w["line"] for w in st["worst"]] == ["83"]
     assert st["worst"][0]["medianDelay"] == 240
     assert st["shareLate"] == 0.75
+
+
+def test_parked_vehicles_get_no_flags_and_leave_city_status(tmp_path):
+    s = _write_static(tmp_path)
+    p = Poller(logger=None)
+    # Two buses parked 100 m apart mid-route (a depot beside the road), plus one running.
+    parked = [_bus("p1", 5000, 900), _bus("p2", 5100, 900)]
+    p.apply(parked + [_bus("r", 2000, 0)], MON_1630)
+    later = MON_1630 + timedelta(minutes=11)
+    p.apply(parked + [_bus("r", 3000, 0)], later)
+    derived = lineview.derive_poll(p.snapshot, s)
+    d0 = lineview.line_view("83", p.snapshot, derived, s, later)["directions"][0]
+    assert d0["summary"]["count"] == 1 and d0["summary"]["bunched"] == 0
+    assert d0["summary"]["medianDelay"] == 0
+    st = lineview.city_status(p.snapshot, derived, s, later)
+    assert st["vehicles"] == 1 and st["shareLate"] == 0
+
+
+def test_history_buckets_by_local_wall_clock_on_dst_day(tmp_path):
+    from datetime import timezone
+
+    from mhd.history import day_curve
+    from mhd.logger import PollLogger
+
+    lg = PollLogger(tmp_path)
+    # 31 Oct 2027 has 25 hours in Bratislava. 22:05 local is 21:05 UTC (after the change to CET).
+    ts = datetime(2027, 10, 31, 21, 5, tzinfo=timezone.utc)
+    lg.log_poll(ts, [_bus("a", 100, 300), _bus("b", 200, 0)], 10, None)
+    lg.compact_finished(now=ts + timedelta(hours=3))
+    from datetime import date
+
+    assert day_curve(tmp_path, date(2027, 10, 31)) == {22 * 6: 0.5}

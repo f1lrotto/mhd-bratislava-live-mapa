@@ -85,7 +85,9 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
             )
         vehicles.sort(key=lambda x: x["along"])
         # Gap from each vehicle to the next one ahead of it on the route.
-        running = [x for x in vehicles if not x["offRoute"]]
+        # Parked vehicles (depots beside the route, broken-down buses) aren't part of the service:
+        # they stay in the list but get no gaps and don't count in the summary.
+        running = [x for x in vehicles if not x["offRoute"] and not x["stale"]]
         for behind, ahead in zip(running, running[1:]):
             dist = ahead["along"] - behind["along"]
             secs = round(dist / speed) if speed else None
@@ -99,7 +101,7 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                     flag = "bunched"
             behind["gapAhead"] = {"m": dist, "s": secs, "flag": flag}
 
-        delays = [x["delay"] for x in vehicles if x["delay"] is not None]
+        delays = [x["delay"] for x in running if x["delay"] is not None]
         biggest = max(
             (x for x in running if x.get("gapAhead") and x["gapAhead"]["flag"] == "gap"),
             key=lambda x: x["gapAhead"]["s"],
@@ -126,7 +128,7 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                 ],
                 "vehicles": vehicles,
                 "summary": {
-                    "count": len(vehicles),
+                    "count": len(running),
                     "medianDelay": int(statistics.median(delays)) if delays else None,
                     "gaps": sum(1 for x in running if x.get("gapAhead", {}).get("flag") == "gap"),
                     "bunched": sum(1 for x in running if x.get("gapAhead", {}).get("flag") == "bunched"),
@@ -159,8 +161,14 @@ def _ahead_of(running: list[dict], x: dict) -> dict:
     return running[running.index(x) + 1]
 
 
-def city_status(snap: Snapshot, static: Static | None, now: datetime) -> dict:
-    in_service = [v for v in snap.vehicles if v.line is not None]
+def city_status(snap: Snapshot, derived: Derived, static: Static | None, now: datetime) -> dict:
+    """Vehicles in service: with a line, not parked (stale), and not far from their route."""
+
+    def running(v: Vehicle) -> bool:
+        m = derived.matches.get(v.key)
+        return v.line is not None and not is_stale(v, snap, now) and (m is None or m.off <= OFF_ROUTE_M)
+
+    in_service = [v for v in snap.vehicles if running(v)]
     by_type = Counter(v.type for v in in_service)
     with_delay = [v for v in in_service if v.delay_s is not None]
     late = [v for v in with_delay if v.delay_s >= LATE_S]

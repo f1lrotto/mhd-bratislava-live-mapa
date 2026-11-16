@@ -54,16 +54,25 @@ def day_curve(root: Path, day: date) -> dict[int, float]:
     t = t.filter(pc.and_(pc.is_valid(t["line"]), pc.is_valid(t["delay_s"])))
     if t.num_rows == 0:
         return {}
-    midnight = datetime.combine(day, time(0), TZ).timestamp()
-    secs = pc.divide(pc.cast(t["ts"], pa.int64()), 1000).to_pylist()
-    late = pc.greater_equal(t["delay_s"], LATE_S).to_pylist()
+    # One row per poll (about 2,900 a day) instead of one per vehicle, then bucket each poll by
+    # its local wall-clock time, so DST days line up with normal days.
+    late = pc.cast(pc.greater_equal(t["delay_s"], LATE_S), pa.int32())
+    per_poll = (
+        pa.table({"ts": t["ts"], "late": late})
+        .group_by("ts")
+        .aggregate([("late", "sum"), ("late", "count")])
+    )
     totals: dict[int, list[int]] = {}
-    for s, is_late in zip(secs, late):
-        b = int((s - midnight) // BUCKET_S)
-        if 0 <= b < 86400 // BUCKET_S:
-            c = totals.setdefault(b, [0, 0])
-            c[0] += int(is_late)
-            c[1] += 1
+    for ts, n_late, n in zip(
+        per_poll["ts"].to_pylist(), per_poll["late_sum"].to_pylist(), per_poll["late_count"].to_pylist()
+    ):
+        local = ts.astimezone(TZ)
+        if local.date() != day:
+            continue
+        b = (local.hour * 3600 + local.minute * 60 + local.second) // BUCKET_S
+        c = totals.setdefault(b, [0, 0])
+        c[0] += n_late
+        c[1] += n
     return {b: round(c[0] / c[1], 3) for b, c in totals.items() if c[1]}
 
 
