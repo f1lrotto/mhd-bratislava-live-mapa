@@ -137,9 +137,9 @@ class Realtime:
                         if trip.svc not in svcs:
                             continue
                         sched = trip.t[k] + off
-                        if not (now_s - 3600 <= sched <= now_s + horizon_s):
-                            continue
                         key, a = live.get((ti, off), (None, None))
+                        if sched > now_s + horizon_s or (sched < now_s - 3600 and a is None):
+                            continue
                         pred = None
                         if a is not None:
                             pred = self.predicted_s(a, k, now_s)
@@ -343,10 +343,15 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
             rt.service[v.key] = "layover" if a.waiting or at_end else "running"
         elif at_end or m.along <= dr.stop_dist[0] + AT_END_M:
             rt.service[v.key] = "layover"
-        else:
-            # Moving along its route but fitting no free trip: mostly the second of two bunched
-            # vehicles that fit the same trip, or a trip missing from the timetable. It runs, so
-            # it still counts for gaps and bunching, just without a trip (or predictions).
+        elif v.delay_s is not None and v.delay_s < DELAY_CAP_S and (tt is None or trips_of(v.line, m.direction)):
+            # Moving along its route but fitting no free trip, while its direction runs: mostly
+            # the second of two bunched vehicles that fit the same trip. It runs, so it still
+            # counts for gaps and bunching, just without a trip (or predictions). Without a
+            # timetable there is nothing to check against.
             rt.service[v.key] = "running"
+        else:
+            # A capped or missing delay with no trip to fit (a depot yard beside the route), or
+            # nothing scheduled around now (after the line's last trip): not known to run.
+            rt.service[v.key] = "unknown"
     rt.elapsed_ms = (_time.perf_counter() - t0) * 1000
     return rt

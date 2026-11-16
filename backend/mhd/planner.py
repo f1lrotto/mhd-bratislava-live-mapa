@@ -32,9 +32,13 @@ WALK_ONLY_M = 2000.0  # longest walk offered instead of transit
 STATION_CHANGE_S = 60  # platform change within a station
 SAME_STOP_CHANGE_S = 30  # changing vehicles at the same stop
 REALTIME_BACKOFF_S = 1200  # with delays, look at trips scheduled up to 20 min before
-SHAPE_MAX_OFF_M = 150.0  # stops farther than this from a shape: draw the ride straight
+SHAPE_MAX_OFF_M = 150.0  # a stop farther than this from a shape: draw its hops straight
+SHAPE_DETOUR, SHAPE_DETOUR_M = 3.0, 300.0  # a hop's shape longer than 3 × crow-fly + 300 m: straight
 TOMORROW_WINDOW_S = 6 * 3600  # tomorrow's trips starting before 06:00 are searchable
 TRANSFER_SLACK_S = 120  # an extra transfer must save more than this to be offered
+SAME_PLACE_M = 30.0  # origin and destination this close: nothing to plan
+WALK_OFFER_M = 1200.0  # a walk this long is offered next to rides …
+WALK_OFFER_SLOWER_S = 300  # … arriving up to this much later than the first of them
 INF = math.inf
 
 
@@ -364,33 +368,52 @@ class Planner:
         return self._pat_proj[p]
 
     def _ride_coords(self, p: int, bpos: int, apos: int) -> list[list[float]]:
-        best = None
-        for pl, along, off in self._projections(p):
-            worst = max(off[bpos:apos + 1])
-            if worst <= SHAPE_MAX_OFF_M and along[apos] > along[bpos] and (best is None or worst < best[0]):
-                best = (worst, pl, along[bpos], along[apos])
-        if best is None:
-            return [[round(self.stop_ll[s][0], 6), round(self.stop_ll[s][1], 6)]
-                    for s in self.pat_stops[p][bpos:apos + 1]]
-        _, pl, a0, a1 = best
+        """The ride along its shape, hop by hop: a hop follows the candidate shape that passes
+        both its stops in order without a long detour, and is drawn straight when none does."""
+        stops = self.pat_stops[p]
+        projs = self._projections(p)
+        pts: list[list[float]] = []
 
-        def at(a: float) -> tuple[float, float]:
-            i = max(0, min(len(pl.cum) - 2, bisect_left(pl.cum, a) - 1))
-            seg = pl.cum[i + 1] - pl.cum[i]
-            f = 0.0 if seg <= 0 else (a - pl.cum[i]) / seg
-            (ax, ay), (bx, by) = pl.xy[i], pl.xy[i + 1]
-            return ax + f * (bx - ax), ay + f * (by - ay)
+        def add_ll(lonlat: tuple[float, float]) -> None:
+            pt = [round(lonlat[0], 6), round(lonlat[1], 6)]
+            if not pts or pts[-1] != pt:
+                pts.append(pt)
 
-        pts = [at(a0)]
-        i0 = bisect_left(pl.cum, a0)
-        while i0 < len(pl.cum) and pl.cum[i0] <= a0:
-            i0 += 1
-        i = i0
-        while i < len(pl.cum) and pl.cum[i] < a1:
-            pts.append(pl.xy[i])
-            i += 1
-        pts.append(at(a1))
-        return [[round(lon, 6), round(lat, 6)] for lon, lat in (to_lonlat(x, y) for x, y in pts)]
+        def add(xy: tuple[float, float]) -> None:
+            add_ll(to_lonlat(*xy))
+
+        for i in range(bpos, apos):
+            (ax, ay), (bx, by) = self.stop_xy[stops[i]], self.stop_xy[stops[i + 1]]
+            crow = math.hypot(bx - ax, by - ay)
+            best = None
+            for pl, along, off in projs:
+                worst = max(off[i], off[i + 1])
+                a0, a1 = along[i], along[i + 1]
+                if (worst <= SHAPE_MAX_OFF_M and a1 > a0 and a1 - a0 <= SHAPE_DETOUR * crow + SHAPE_DETOUR_M
+                        and (best is None or worst < best[0])):
+                    best = (worst, pl, a0, a1)
+            if best is None:
+                add_ll(self.stop_ll[stops[i]])
+                add_ll(self.stop_ll[stops[i + 1]])
+                continue
+            _, pl, a0, a1 = best
+            add(self._at(pl, a0))
+            j = bisect_left(pl.cum, a0)
+            while j < len(pl.cum) and pl.cum[j] <= a0:
+                j += 1
+            while j < len(pl.cum) and pl.cum[j] < a1:
+                add(pl.xy[j])
+                j += 1
+            add(self._at(pl, a1))
+        return pts
+
+    @staticmethod
+    def _at(pl: Polyline, a: float) -> tuple[float, float]:
+        i = max(0, min(len(pl.cum) - 2, bisect_left(pl.cum, a) - 1))
+        seg = pl.cum[i + 1] - pl.cum[i]
+        f = 0.0 if seg <= 0 else (a - pl.cum[i]) / seg
+        (ax, ay), (bx, by) = pl.xy[i], pl.xy[i + 1]
+        return ax + f * (bx - ax), ay + f * (by - ay)
 
     def _build(self, day: _Day, steps: list[tuple], o_pt: dict, d_pt: dict, egress_m: dict,
                access_m: dict, delays: dict[tuple[int, int], int]) -> dict:
@@ -480,6 +503,12 @@ class Planner:
 
     def plan(self, origin: dict, dest: dict, depart: datetime, delays: dict[str, int] | None = None,
              max_results: int = 3) -> list[dict]:
+        return self.plan_with_reason(origin, dest, depart, delays, max_results)[0]
+
+    def plan_with_reason(self, origin: dict, dest: dict, depart: datetime, delays: dict[str, int] | None = None,
+                         max_results: int = 3) -> tuple[list[dict], str | None]:
+        """Options, and why there are none: "same_place", "no_stops_near_origin",
+        "no_stops_near_destination" or "no_connection" (None when there are options)."""
         if depart.tzinfo is None:
             depart = depart.replace(tzinfo=TZ)
         local = depart.astimezone(TZ)
@@ -488,6 +517,40 @@ class Planner:
 
         o_pt, o_plats = self._place(origin)
         d_pt, d_plats = self._place(dest)
+        dist = math.hypot(*(a - b for a, b in zip(to_xy(o_pt["lon"], o_pt["lat"]), to_xy(d_pt["lon"], d_pt["lat"]))))
+        if (o_pt["station"] is not None and o_pt["station"] == d_pt["station"]) or dist < SAME_PLACE_M:
+            return [], "same_place"
+
+        results, reason = self._rides(o_pt, o_plats, d_pt, d_plats, depart, delays, max_results)
+        if reason == "no_connection":  # nothing more today: the next service day from its start
+            nxt = _service_midnight(local.date() + timedelta(days=1))
+            results, _ = self._rides(o_pt, o_plats, d_pt, d_plats, nxt, None, max_results)
+
+        # Walking all the way: when it beats every ride, or is short and not much slower. Rides
+        # taking at least as long as the walk are then left out.
+        if 0 < dist <= WALK_ONLY_M:
+            w = walk_seconds(dist)
+            arrive = depart.timestamp() + w
+            best = min((it["arrive_t"] for it in results), default=INF)
+            if arrive < best or (dist * DETOUR <= WALK_OFFER_M and arrive <= best + WALK_OFFER_SLOWER_S):
+                leg = {"kind": "walk", "from": o_pt, "to": d_pt, "start": self._iso(day, t0),
+                       "end": self._iso(day, t0 + w), "m": int(round(dist * DETOUR)),
+                       "coords": [[o_pt["lon"], o_pt["lat"]], [d_pt["lon"], d_pt["lat"]]]}
+                walk = {**self._summary(day, [leg]), "arrive_t": arrive}
+                results = sorted([it for it in results if it["duration"] < w] + [walk], key=lambda it: it["arrive_t"])
+                if walk not in results[:max_results]:
+                    results = results[:max_results - 1] + [walk]
+        for it in results:
+            it.pop("depart_t", None)
+            it.pop("arrive_t", None)
+        return results[:max_results], (None if results else reason)
+
+    def _rides(self, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
+               depart: datetime, delays: dict[str, int] | None, max_results: int) -> tuple[list[dict], str | None]:
+        """Transit options (with "depart_t" and "arrive_t" timestamps), and the reason when none."""
+        local = depart.astimezone(TZ)
+        day = self._day(local.date())
+        t0 = int(math.floor((depart.astimezone(UTC) - day.base).total_seconds()))
 
         # Access: a station's platforms at once (and stops a transfer walk away), or a walk.
         access_m: dict[int, float] = {}
@@ -562,7 +625,7 @@ class Planner:
                          and (b["arrive_t"], b["transfers"], -b["depart_t"])
                          != (a["arrive_t"], a["transfers"], -a["depart_t"]))
                         # … or an extra transfer that saves less than TRANSFER_SLACK_S.
-                        or (b["transfers"] < a["transfers"]
+                        or (b["transfers"] < a["transfers"] and b["depart_t"] >= a["depart_t"] - TRANSFER_SLACK_S
                             and b["arrive_t"] <= a["arrive_t"] + TRANSFER_SLACK_S * (a["transfers"] - b["transfers"])))
                     for b in its)
                 if not dominated and all((b["arrive_t"], b["transfers"], b["depart_t"]) !=
@@ -572,27 +635,16 @@ class Planner:
 
         # Later departures of the best option of each run, until there are enough results.
         t = t0
+        if not src or not egress:
+            return [], "no_stops_near_origin" if not src else "no_stops_near_destination"
         last = search(t)
         add(last)
         runs = 1
         while last and len(pareto()) < max_results and runs < 3 * max_results + 2:
             best = min(last, key=key)
-            t = max(t + 60, best["depart_t"] - depart.timestamp() + t0 + 60)
+            t = max(t + 1, best["depart_t"] - depart.timestamp() + t0 + 1)
             last = search(t)
             add(last)
             runs += 1
         results = pareto()
-
-        # Walking all the way, if it beats every ride.
-        dist = math.hypot(*(a - b for a, b in zip(to_xy(o_pt["lon"], o_pt["lat"]), to_xy(d_pt["lon"], d_pt["lat"]))))
-        if 0 < dist <= WALK_ONLY_M:
-            w = walk_seconds(dist)
-            if not results or depart.timestamp() + w < min(it["arrive_t"] for it in results):
-                leg = {"kind": "walk", "from": o_pt, "to": d_pt, "start": self._iso(day, t0),
-                       "end": self._iso(day, t0 + w), "m": int(round(dist * DETOUR)),
-                       "coords": [[o_pt["lon"], o_pt["lat"]], [d_pt["lon"], d_pt["lat"]]]}
-                results.insert(0, {**self._summary(day, [leg]), "depart_t": 0, "arrive_t": 0})
-        for it in results:
-            it.pop("depart_t", None)
-            it.pop("arrive_t", None)
-        return results[:max_results]
+        return results, None if results else "no_connection"

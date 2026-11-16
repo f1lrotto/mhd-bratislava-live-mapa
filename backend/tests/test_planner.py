@@ -166,3 +166,110 @@ def test_map_point_origin_walks_to_the_stop(tmp_path):
     lon2, lat2 = ll(300, 0)
     res = p.plan({"lat": lat, "lon": lon}, {"lat": lat2, "lon": lon2}, at(8, 0))
     assert [leg["kind"] for leg in res[0]["legs"]] == ["walk"] and res[0]["transfers"] == 0
+
+
+def test_same_place_plans_nothing(tmp_path):
+    # Q is a second platform of station 1: line 2 would bring you back to where you started.
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "Q": (0, 20, "1")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["B", "Q"]}}, [
+        ("out", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("back", "2", "0", "work", [hms(8, 15), hms(8, 25)]),
+    ])
+    assert p.plan_with_reason({"station": "1"}, {"station": "1"}, at(7, 55)) == ([], "same_place")
+    (lon, lat), (lon2, lat2) = ll(2000, 0), ll(2010, 0)
+    assert p.plan_with_reason({"lat": lat, "lon": lon}, {"lat": lat2, "lon": lon2}, at(7, 55)) == ([], "same_place")
+
+
+def test_reasons_for_no_options(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2")}
+    p = _write(tmp_path, stops, {"1": {"0": ["B", "A"]}}, [("t", "1", "0", "work", [hms(8, 0), hms(8, 10)])])
+    lon, lat = ll(0, 5000)  # 5 km from any stop
+    assert p.plan_with_reason({"lat": lat, "lon": lon}, {"station": "2"}, at(7, 55)) == ([], "no_stops_near_origin")
+    assert p.plan_with_reason({"station": "2"}, {"lat": lat, "lon": lon}, at(7, 55)) == ([], "no_stops_near_destination")
+    assert p.plan_with_reason({"station": "1"}, {"station": "2"}, at(7, 55)) == ([], "no_connection")
+    assert p.plan_with_reason({"station": "2"}, {"station": "1"}, at(7, 55))[1] is None
+
+
+def test_later_one_transfer_option_is_kept(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "C": (10_000, 0, "3")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "C"]}, "2": {"0": ["A", "B"]}, "3": {"0": ["B", "C"]}}, [
+        ("direct", "1", "0", "work", [hms(8, 0), hms(8, 41)]),
+        ("first", "2", "0", "work", [hms(8, 20), hms(8, 30)]),
+        ("second", "3", "0", "work", [hms(8, 32), hms(8, 40)]),
+    ])
+    res = p.plan({"station": "1"}, {"station": "3"}, at(7, 55))
+    # The transfer saves only a minute, but leaves 20 minutes later.
+    assert [[r["trip"] for r in rides(it)] for it in res] == [["first", "second"], ["direct"]]
+
+
+def test_later_departures_just_after_the_best_are_found(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}}, [
+        ("t1", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("t2", "1", "0", "work", [hms(8, 0, 30), hms(8, 12)]),
+        ("t3", "1", "0", "work", [hms(8, 20), hms(8, 30)]),
+    ])
+    res = p.plan({"station": "1"}, {"station": "2"}, at(7, 59))
+    assert [rides(it)[0]["trip"] for it in res] == ["t1", "t2", "t3"]
+
+
+def test_late_evening_finds_the_next_days_first_trips(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}}, [("t", "1", "0", "work", [hms(8, 0), hms(8, 10)])])
+    res, reason = p.plan_with_reason({"station": "1"}, {"station": "2"}, at(23, 30))
+    assert reason is None and res[0]["depart"] == iso(8, 0, day=(2026, 11, 17))
+
+
+def test_short_walk_is_offered_next_to_rides_and_replaces_slower_ones(tmp_path):
+    # 900 m apart: the walk is 1170 m, 936 s (15:36).
+    stops = {"A": (0, 0, "1"), "B": (900, 0, "2")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}}, [
+        ("t1", "1", "0", "work", [hms(8, 8), hms(8, 12)]),
+        ("slow", "1", "0", "work", [hms(8, 30), hms(8, 50)]),  # 20 min: slower than walking
+        ("t3", "1", "0", "work", [hms(8, 45), hms(8, 55)]),
+    ])
+    (lon, lat), (lon2, lat2) = ll(0), ll(900)
+    res = p.plan({"lat": lat, "lon": lon}, {"lat": lat2, "lon": lon2}, at(8, 0))
+    kinds = [[r["trip"] for r in rides(it)] or "walk" for it in res]
+    assert kinds == [["t1"], "walk", ["t3"]]
+    assert res[1]["arrive"] == iso(8, 15, 36) and res[1]["walkM"] == 1170
+
+
+def test_ride_geometry_falls_back_per_hop(tmp_path):
+    # B → C is 100 m apart but the shape loops 3 km north between them; X lies 400 m off the shape.
+    stops = {"A": (0, 0, "1"), "B": (1000, 0, "2"), "C": (1100, 0, "3"), "D": (2100, 0, "4"), "X": (2600, 400, "5")}
+    bend1, bend2 = list(ll(500, 100)), list(ll(1600, 100))
+    shape = [list(ll(0)), bend1, list(ll(1000)), list(ll(1000, 1500)), list(ll(1100, 1500)), list(ll(1100)),
+             bend2, list(ll(2100)), list(ll(2600))]
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B", "C", "D", "X"]}},
+               [("t", "1", "0", "work", [hms(8, 0), hms(8, 2), hms(8, 3), hms(8, 5), hms(8, 6)])],
+               shapes={"1": {"0": shape}})
+    coords = rides(p.plan({"station": "1"}, {"station": "5"}, at(7, 55))[0])[0]["coords"]
+    r = lambda c: [round(c[0], 6), round(c[1], 6)]  # noqa: E731
+    assert r(bend1) in coords and r(bend2) in coords
+    assert r(ll(1000, 1500)) not in coords  # the loop is drawn straight
+    assert coords[-1] == r(ll(2600, 400)) and coords[-2] == r(ll(2100))  # D → X straight
+
+
+def test_api_plan_takes_a_naive_time_as_bratislava_and_gives_a_reason(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import mhd.app
+    from mhd.poller import Poller
+
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2")}
+    _write(tmp_path, stops, {"1": {"0": ["A", "B"]}}, [("t", "1", "0", "work", [hms(8, 0), hms(8, 10)])])
+    d = tmp_path / "static"
+    lines = json.loads((d / "lines.json").read_text())  # what Static needs besides the planner's fields
+    lines["1"]["directions"]["0"].update(headsigns=["End"], stopDist=[0, 5000], length=5000)
+    (d / "lines.json").write_text(json.dumps(lines))
+    (d / "meta.json").write_text(json.dumps({"feedVersion": "t"}))
+    monkeypatch.setattr(mhd.app, "DATA_DIR", tmp_path)
+    with TestClient(mhd.app.create_app(poller=Poller(logger=None), start_polling=False)) as c:
+        r = c.get("/api/plan", params={"from": "1", "to": "2", "at": "2026-11-16T07:55"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["options"][0]["depart"] == iso(8, 0) and body["reason"] is None
+        assert body["live"] is False  # a past time doesn't get today's delays
+        assert c.get("/api/plan", params={"from": "1", "to": "1"}).json() == {
+            "options": [], "reason": "same_place", "live": True}

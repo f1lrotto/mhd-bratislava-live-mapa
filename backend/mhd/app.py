@@ -16,6 +16,7 @@ import base64
 import logging
 import os
 import secrets
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,7 @@ from .history import History
 from .logger import PollLogger
 from .planner import Planner
 from .poller import Poller
-from .static import Static
+from .static import TZ, Static
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("MHD_DATA_DIR", ROOT / "data"))
@@ -46,28 +47,42 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     if poller is None:
         poller = Poller(PollLogger(DATA_DIR / "logs") if start_polling else None)
 
-    # Static build, reloaded when a nightly build rewrites meta.json.
-    state: dict = {"static": None, "static_mtime": None, "derived": lineview.Derived()}
+    # Static build, reloaded when a nightly build rewrites meta.json. Loading the timetable and
+    # the planner takes seconds, so a new build loads in a background thread while the old one
+    # keeps serving; only the very first load (nothing to serve yet) waits for it.
+    state: dict = {"static": None, "static_mtime": None, "planner": None, "derived": lineview.Derived()}
     meta_path = DATA_DIR / "static" / "meta.json"
+    loading = threading.Lock()
+
+    def load_static(mtime: float) -> None:
+        try:
+            static = Static.load(DATA_DIR)
+            # Load the timetable now, not inside a poll.
+            p = Planner(DATA_DIR / "static") if static is not None and static.timetable is not None else None
+            state["static"], state["planner"], state["static_mtime"] = static, p, mtime
+            logging.getLogger(__name__).info("loaded static build %s", static.meta.get("feedVersion") if static else None)
+        except Exception:
+            logging.getLogger(__name__).exception("failed to load static build")
+        finally:
+            loading.release()
 
     def current_static() -> Static | None:
         try:
             mtime = meta_path.stat().st_mtime
         except FileNotFoundError:
             return state["static"]
-        if mtime != state["static_mtime"]:
-            try:
-                state["static"] = Static.load(DATA_DIR)
-                state["static_mtime"] = mtime
-                logging.getLogger(__name__).info("loaded static build %s", state["static"].meta.get("feedVersion"))
-            except Exception:
-                logging.getLogger(__name__).exception("failed to load static build")
+        if mtime != state["static_mtime"] and loading.acquire(blocking=False):
+            if state["static"] is None:
+                load_static(mtime)
+            else:
+                threading.Thread(target=load_static, args=(mtime,), daemon=True).start()
         return state["static"]
 
     history = History(DATA_DIR / "logs")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        await asyncio.to_thread(current_static)  # the first load, before polls need it
         task = asyncio.create_task(poller.run()) if start_polling else None
         yield
         if task:
@@ -166,15 +181,8 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         }
         return JSONResponse(body, headers=no_store)
 
-    planner: dict = {"mtime": None, "p": None}
-
     def current_planner() -> Planner | None:
-        if current_static() is None:
-            return None
-        if planner["mtime"] != state["static_mtime"]:
-            planner["p"] = Planner(DATA_DIR / "static")
-            planner["mtime"] = state["static_mtime"]
-        return planner["p"]
+        return state["planner"] if current_static() is not None else None
 
     def _place(value: str, name: str | None) -> dict:
         """\"93\" is a station code, \"48.15,17.11\" a map point or the user's location."""
@@ -197,13 +205,16 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         now = datetime.now(timezone.utc)
         try:
             depart = datetime.fromisoformat(at) if at else now
+            if depart.tzinfo is None:  # a wall-clock time in Bratislava
+                depart = depart.replace(tzinfo=TZ)
             o, d = _place(origin, fromName), _place(dest, toName)
         except ValueError:
             return JSONResponse({"error": "bad from, to or at"}, status_code=400)
         rt = state["derived"].realtime
-        live = depart - now < timedelta(hours=2)  # current delays only matter for trips leaving soon
+        # Current delays only matter for trips leaving around now.
+        live = timedelta(minutes=-30) < depart - now < timedelta(hours=2)
         try:
-            options = p.plan(o, d, depart, delays=rt.trip_delays() if live else None)
+            options, reason = p.plan_with_reason(o, d, depart, delays=rt.trip_delays() if live else None)
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
         vehicles = rt.trip_vehicle() if live else {}
@@ -211,7 +222,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             for leg in it["legs"]:
                 if leg["kind"] == "ride":
                     leg["vehicle"] = vehicles.get(leg["trip"])
-        return JSONResponse({"options": options, "live": live}, headers=no_store)
+        return JSONResponse({"options": options, "reason": reason, "live": live}, headers=no_store)
 
     @app.get("/api/line/{line}")
     def line(line: str):

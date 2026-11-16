@@ -126,3 +126,35 @@ def test_bus_waiting_at_the_first_stop_takes_the_next_departure(tmp_path):
     assert derived.service("w") == "layover" and derived.service("r") == "running"
     trip = derived.realtime.vehicle_trip("w", MON_1630 + timedelta(minutes=2))
     assert trip["waiting"] and trip["stops"][0]["predicted"][11:16] == "16:40"
+
+
+def test_vehicle_fitting_no_trip_runs_only_with_a_known_delay_while_its_line_runs(tmp_path):
+    s = _static(tmp_path)
+    p = Poller(logger=None)
+    # "bunched" follows "known" on the 16:20 trip (the 16:10 trip is too early for it and the 16:30
+    # trip is "nodelay"'s); "yard" reports a capped delay where the capped 16:00 bus already runs.
+    p.apply(VEHICLES + [_bus("bunched", 4050, 60), _bus("yard", 7050, 900)], MON_1630)
+    derived = lineview.derive_poll(p.snapshot, s, MON_1630)
+    rt = derived.realtime
+    assert rt.trip_id("bunched") is None and derived.service("bunched") == "running"
+    # One of the two capped buses takes the 16:00 trip; the other fits none and isn't running.
+    spare = [k for k in ("capped", "yard") if rt.trip_id(k) is None]
+    assert len(spare) == 1 and derived.service(spare[0]) == "unknown"
+    # After the line's last trip (17:50 → 18:10) nothing on the route runs.
+    late = MON_1630 + timedelta(hours=2, minutes=30)
+    p = Poller(logger=None)
+    p.apply([_bus("after", 5000, 60)], late)
+    assert lineview.derive_poll(p.snapshot, s, late).service("after") == "unknown"
+
+
+def test_board_keeps_a_trip_scheduled_over_an_hour_ago_while_its_vehicle_runs(tmp_path):
+    from mhd.realtime import Assignment
+
+    s, _, derived = _derive(tmp_path)
+    rt = derived.realtime
+    now = MON_1630 + timedelta(hours=1, minutes=10)  # the 16:00 trip was due at M at 16:10
+    ti = s.timetable.by_id["t960"]
+    rt.assigned = {"capped": Assignment(trip=ti, offset=0, along=4000, next_stop=1, delay=3900,
+                                        uncertain=True, waiting=False)}
+    board = rt.departures(["M"], now, horizon_s=20 * 60)
+    assert ("t960", "17:40") in [(d["trip"], d["predicted"][11:16]) for d in board if d["live"]]
