@@ -13,6 +13,18 @@
   // Off-route vehicles have no meaningful position on the route; list them after the running ones.
   const ordered = $derived(current ? [...current.vehicles.filter((v) => !v.offRoute), ...current.vehicles.filter((v) => v.offRoute)] : [])
   const AT_END_M = 250
+  const dupHeadsign = (d: LineDirection) => (lv?.directions.filter((x) => x.headsign === d.headsign).length ?? 0) > 1
+  const tabLabel = (d: LineDirection) => (dupHeadsign(d) ? `${d.from} → ${d.headsign}` : d.headsign)
+  // Dots closer than this share of the ribbon would overlap; lift the later one so both show.
+  const lifted = $derived.by(() => {
+    const out = new Set<string>()
+    if (!current) return out
+    const run = current.vehicles.filter((v) => !v.offRoute)
+    for (let i = 1; i < run.length; i++) {
+      if (!out.has(run[i - 1].key) && pct(current, run[i].along) - pct(current, run[i - 1].along) < 4) out.add(run[i].key)
+    }
+    return out
+  })
 
   function pct(d: LineDirection, along: number): number {
     return Math.min(100, Math.max(0, (along / Math.max(1, d.length)) * 100))
@@ -28,8 +40,16 @@
   function summary(d: LineDirection): string {
     const s = d.summary
     const parts = [plural(s.count, 'vozidlo', 'vozidlá', 'vozidiel') + ` smer ${d.headsign}`]
-    if (s.medianDelay != null) parts.push(`medián meškania ${delayText(s.medianDelay)}`)
-    if (s.biggestGap) parts.push(`${minutes(s.biggestGap.s)} medzera za zastávkou ${s.biggestGap.afterStop}`)
+    if (s.medianDelay != null)
+      parts.push(s.medianDelay < 60 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay)}`)
+    if (s.biggestGap) {
+      const g = s.biggestGap
+      parts.push(
+        g.fromStop && g.fromStop !== g.afterStop
+          ? `medzera ≈${minutes(g.s)} medzi ${g.fromStop} a ${g.afterStop}`
+          : `medzera ≈${minutes(g.s)} pri zastávke ${g.afterStop}`,
+      )
+    }
     else if (s.bunched) parts.push(s.bunched === 1 ? 'dve vozidlá idú tesne za sebou' : `${s.bunched}× vozidlá tesne za sebou`)
     return parts.join(', ')
   }
@@ -46,7 +66,7 @@
   }
 </script>
 
-<Panel label="Linka {line}">
+<Panel tall label="Linka {line}">
   {#snippet header()}
     <LineBadge {line} size="lg" />
     <div class="head-text">
@@ -57,7 +77,9 @@
 
   {#if !lv}
     {#if app.lineViewError}
-      <p class="note error">Linku sa nepodarilo načítať: {app.lineViewError}</p>
+      <p class="note error">
+        {app.lineViewError.startsWith('unknown line') ? `Linka ${line} neexistuje.` : `Linku sa nepodarilo načítať (${app.lineViewError}).`}
+      </p>
     {:else}
       <div class="skeleton" aria-busy="true">
         <div></div>
@@ -69,16 +91,15 @@
     <p class="note">Linka {line} nemá v cestovnom poriadku žiadnu trasu.</p>
   {:else}
     {#if lv.directions.length > 1}
-      <div class="tabs" role="tablist" aria-label="Smer">
+      <div class="tabs" class:many={lv.directions.length > 2} role="group" aria-label="Smer">
         {#each lv.directions as d (d.id)}
           <button
-            role="tab"
-            aria-selected={d.id === current.id}
+            aria-pressed={d.id === current.id}
             class:active={d.id === current.id}
             onclick={() => navigate({ kind: 'line', line, dir: d.id }, { replace: true })}
           >
-            <span class="arrow" aria-hidden="true">→</span>
-            <span class="tab-name">{d.headsign}</span>
+            {#if !dupHeadsign(d)}<span class="arrow" aria-hidden="true">→</span>{/if}
+            <span class="tab-name">{tabLabel(d)}</span>
             <span class="count">{d.summary.count}</span>
           </button>
         {/each}
@@ -88,7 +109,7 @@
     <p class="summary">{summary(current)}.</p>
     <p class="interval">
       {#if current.interval}
-        Podľa cestovného poriadku teraz každých <strong>{minutes(current.interval)}</strong>
+        Podľa cestovného poriadku teraz každých <strong class="nowrap">{minutes(current.interval)}</strong>
       {:else}
         Podľa cestovného poriadku teraz nepremáva
       {/if}
@@ -112,6 +133,7 @@
         <button
           class="dot"
           class:stale={v.stale}
+          class:lift={lifted.has(v.key)}
           style:left="{pct(current, v.along)}%"
           style:background={v.stale ? 'var(--stale)' : bandColor(delayBand(v.delay))}
           tabindex="-1"
@@ -141,7 +163,7 @@
             {#if v.gapAhead && i < ordered.length - 1}
               <div class="between {v.gapAhead.flag ?? ''}">
                 <span class="gap-line" aria-hidden="true"></span>
-                {#if v.gapAhead.s != null}{minutes(v.gapAhead.s)}{/if}
+                {#if v.gapAhead.s != null}≈{minutes(v.gapAhead.s)}{/if}
                 <span class="muted">· {(v.gapAhead.m / 1000).toFixed(1).replace('.', ',')} km</span>
                 {#if v.gapAhead.flag === 'gap'}<span class="flag">medzera</span>{/if}
                 {#if v.gapAhead.flag === 'bunched'}<span class="flag">tesne za sebou</span>{/if}
@@ -181,6 +203,16 @@
     display: flex;
     gap: 6px;
     margin: 2px 0 12px;
+  }
+  .tabs.many {
+    flex-wrap: wrap;
+  }
+  .tabs.many button {
+    flex: 1 1 calc(50% - 3px);
+  }
+  .tabs.many .tab-name {
+    white-space: normal;
+    line-height: 1.2;
   }
   .tabs button {
     flex: 1;
@@ -227,21 +259,21 @@
   }
   .ribbon {
     position: relative;
-    height: 34px;
+    height: 40px;
     margin: 0 9px;
   }
   .track {
     position: absolute;
     left: 0;
     right: 0;
-    top: 15px;
+    top: 21px;
     height: 4px;
     border-radius: 2px;
     opacity: 0.45;
   }
   .tick {
     position: absolute;
-    top: 13px;
+    top: 19px;
     width: 2px;
     height: 8px;
     margin-left: -1px;
@@ -249,14 +281,18 @@
     border-radius: 1px;
   }
   .tick.end {
-    top: 10px;
+    top: 16px;
     height: 14px;
     width: 3px;
     background: var(--text);
   }
+  .nowrap {
+    white-space: nowrap;
+  }
   .seg {
+    min-width: 10px;
     position: absolute;
-    top: 14px;
+    top: 20px;
     height: 6px;
     border-radius: 3px;
   }
@@ -268,7 +304,7 @@
   }
   .dot {
     position: absolute;
-    top: 8px;
+    top: 14px;
     width: 18px;
     height: 18px;
     margin-left: -9px;
@@ -276,6 +312,10 @@
     border: 2.5px solid #fff;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     padding: 0;
+  }
+  .dot.lift {
+    top: -4px;
+    box-shadow: 0 0 0 2px var(--warn), 0 1px 3px rgba(0, 0, 0, 0.35);
   }
   .ends {
     display: flex;

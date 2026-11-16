@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { compareLines, isNight } from '../lib/format'
+  import { compareLines, isNight, plural } from '../lib/format'
   import { app } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
 
@@ -39,7 +39,7 @@
         class:on={selected?.includes(l.line)}
         class:idle={!n}
         aria-pressed={selected ? selected.includes(l.line) : undefined}
-        aria-label="Linka {l.line}, {n} vozidiel"
+        aria-label="Linka {l.line}, {plural(n, 'vozidlo', 'vozidlá', 'vozidiel')}"
         onclick={() => onpick(l.line)}
       >
         <LineBadge line={l.line} />

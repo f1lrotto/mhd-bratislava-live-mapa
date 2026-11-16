@@ -30,7 +30,7 @@
   )
 </script>
 
-<Panel label="Stav dopravy">
+<Panel tall label="Stav dopravy">
   {#snippet header()}
     <strong>Stav dopravy v meste</strong>
   {/snippet}

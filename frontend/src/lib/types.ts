@@ -72,6 +72,8 @@ export interface LineDirection {
   duration: number | null
   interval: number | null
   coords: [number, number][]
+  /** Extra branch geometries that share this direction's ribbon (e.g. line 4 via Nové Mesto). */
+  branches?: [number, number][][]
   stops: { id: string; name: string; dist: number; lat: number; lon: number }[]
   vehicles: RibbonVehicle[]
   summary: {
@@ -79,7 +81,7 @@ export interface LineDirection {
     medianDelay: number | null
     gaps: number
     bunched: number
-    biggestGap: { s: number; afterStop: string } | null
+    biggestGap: { s: number; afterStop: string; fromStop?: string } | null
   }
 }
 

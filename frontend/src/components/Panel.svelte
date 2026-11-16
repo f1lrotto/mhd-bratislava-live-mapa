@@ -1,8 +1,23 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
+  import { onMount, type Snippet } from 'svelte'
   import { closePanel } from '../lib/state.svelte'
 
-  let { label, header, children }: { label: string; header: Snippet; children: Snippet } = $props()
+  let {
+    label,
+    header,
+    children,
+    tall = false,
+  }: { label: string; header: Snippet; children: Snippet; tall?: boolean } = $props()
+
+  let section: HTMLElement
+  // Move keyboard focus into the panel when it opens, and back to where it came from when it closes.
+  onMount(() => {
+    const opener = document.activeElement as HTMLElement | null
+    if (opener && opener !== document.body) section.focus({ preventScroll: true })
+    return () => {
+      if (opener?.isConnected && !document.querySelector('.panel')) opener.focus({ preventScroll: true })
+    }
+  })
 
   // On phones the panel is a bottom sheet: half height, or nearly full when expanded.
   let expanded = $state(false)
@@ -16,14 +31,12 @@
     const dy = e.clientY - startY
     startY = null
     if (dy < -30) expanded = true
-    else if (dy > 30) {
-      if (expanded) expanded = false
-      else closePanel()
-    }
+    // Swiping down only shrinks the sheet; closing is the ✕ button, so a line isn't lost by accident.
+    else if (dy > 30) expanded = false
   }
 </script>
 
-<section class="panel" class:expanded aria-label={label}>
+<section class="panel" class:expanded class:tall aria-label={label} tabindex="-1" bind:this={section}>
   <!-- The handle button is the accessible control; the swipe area is a touch shortcut for it. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="sheet-top" onpointerdown={down} onpointerup={up} onpointercancel={() => (startY = null)}>
@@ -46,6 +59,9 @@
 </section>
 
 <style>
+  .panel:focus {
+    outline: none;
+  }
   .panel {
     position: absolute;
     z-index: 5;
@@ -110,13 +126,17 @@
       left: 0;
       right: 0;
       bottom: 0;
-      height: min(50dvh, 460px);
+      max-height: min(50dvh, 460px);
       border-radius: 18px 18px 0 0;
-      transition: height 0.22s ease;
+      transition: height 0.22s ease, max-height 0.22s ease;
       padding-bottom: env(safe-area-inset-bottom);
+    }
+    .panel.tall {
+      height: min(50dvh, 460px);
     }
     .panel.expanded {
       height: calc(100dvh - 64px);
+      max-height: calc(100dvh - 64px);
     }
     .sheet-top {
       touch-action: none;

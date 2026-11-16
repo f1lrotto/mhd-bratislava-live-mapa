@@ -62,6 +62,10 @@
       <p class="where">
         {#if rv.offRoute}
           Mimo trasy smeru {dir.headsign}.
+        {:else if rv.along > dir.length - 250}
+          Na konečnej <strong>{dir.headsign}</strong>.
+        {:else if rv.along < 250}
+          Na konečnej <strong>{dir.from}</strong>, čaká na odchod.
         {:else}
           Za zastávkou <strong>{dir.stops[rv.lastStop]?.name}</strong>, {Math.round((rv.along / dir.length) * 100)} % trasy.
         {/if}

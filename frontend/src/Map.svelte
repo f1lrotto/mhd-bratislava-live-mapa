@@ -78,6 +78,9 @@
       if (!sel && !passes(v, app.filters)) continue
       const p = at(v.key, t) ?? [v.lon, v.lat]
       const dim = activeLine != null && v.line !== activeLine && !sel
+      // On the active line, vehicles of the other directions stay visible but softer.
+      const other = !dim && !sel && activeLine != null && selectedDir != null && v.dir != null && v.dir !== selectedDir
+      const hi = activeLine != null && !dim
       features.push({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: p },
@@ -85,9 +88,11 @@
           key: v.key,
           line: v.line ?? '',
           type: v.type,
-          c: down || v.stale ? 's' : v.band == null ? 'n' : String(v.band),
+          c: down || v.stale || dim ? 's' : v.band == null ? 'n' : String(v.band),
           az: v.az ?? -1,
           dim,
+          other,
+          hi,
           sel,
           z: sel ? 3 : dim ? 0 : 1,
         },
@@ -116,7 +121,7 @@
   function fitLine(lv: LineView): void {
     if (!map) return
     const b = new maplibregl.LngLatBounds()
-    for (const d of lv.directions) for (const c of d.coords) b.extend(c)
+    for (const d of lv.directions) for (const cs of [d.coords, ...(d.branches ?? [])]) for (const c of cs) b.extend(c)
     if (b.isEmpty()) return
     const c = covered()
     const pad = isMobile() ? 24 : 48
@@ -140,11 +145,13 @@
     const sel = selectedDir ?? lv.directions[0]?.id
     route.setData({
       type: 'FeatureCollection',
-      features: lv.directions.map((d) => ({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: d.coords },
-        properties: { dir: d.id, sel: d.id === sel, color: lv.color },
-      })),
+      features: lv.directions.flatMap((d) =>
+        [d.coords, ...(d.branches ?? [])].map((coords) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: coords },
+          properties: { dir: d.id, sel: d.id === sel, color: lv.color },
+        })),
+      ),
     })
     const d = lv.directions.find((x) => x.id === sel)
     stops.setData({
@@ -160,7 +167,19 @@
   // --- setup ------------------------------------------------------------------------------------
   const EMPTY = { type: 'FeatureCollection' as const, features: [] }
   const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 10, 0.42, 12, 0.66, 14, 0.88, 16, 1] as any
-  const dimmed = (on: number, off: number) => ['case', ['get', 'dim'], off, on] as any
+  const dimmed = (on: number, off: number, other = on) =>
+    ['case', ['get', 'dim'], off, ['get', 'other'], other, on] as any
+  // The active line's vehicles are 30% larger and always labelled.
+  const VEH_SIZE = [
+    'interpolate', ['linear'], ['zoom'],
+    ...[[10, 0.42], [12, 0.66], [14, 0.88], [16, 1]].flatMap(([z, k]) => [z, ['case', ['get', 'hi'], Math.max(0.8, k * 1.3), k]]),
+  ] as any
+  const LONG = ['>=', ['length', ['get', 'line']], 3]
+  const LABEL_SIZE = [
+    'step', ['zoom'],
+    ['case', ['get', 'hi'], ['case', LONG, 9.5, 11], 0],
+    12, ['case', ['get', 'hi'], ['case', LONG, 10.5, 12.5], ['case', LONG, 9.5, 11.5]],
+  ] as any
 
   function setup(m: MlMap): void {
     addMarkerImages(m)
@@ -175,7 +194,7 @@
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['case', ['get', 'sel'], 1, 0] },
         paint: {
           'line-color': '#ffffff',
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 11],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 15, 14],
           'line-opacity': ['case', ['get', 'sel'], 1, 0.6],
         },
       },
@@ -189,7 +208,7 @@
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['case', ['get', 'sel'], 1, 0] },
         paint: {
           'line-color': ['get', 'color'],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 7],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 15, 9],
           'line-opacity': ['case', ['get', 'sel'], 1, 0.35],
         },
       },
@@ -200,13 +219,13 @@
       type: 'symbol',
       source: 'route',
       filter: ['get', 'sel'],
-      minzoom: 12,
+      minzoom: 10,
       layout: {
         'symbol-placement': 'line',
         'symbol-spacing': 140,
         'text-field': '›',
         'text-font': ['Noto Sans Bold'],
-        'text-size': ['interpolate', ['linear'], ['zoom'], 12, 14, 16, 20],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 10, 12, 16, 20],
         'text-keep-upright': false,
         'text-allow-overlap': true,
         'text-offset': [0, -0.1],
@@ -283,17 +302,17 @@
       id: 'veh-arrow',
       type: 'symbol',
       source: 'vehicles',
-      filter: ['>=', ['get', 'az'], 0],
+      filter: ['all', ['>=', ['get', 'az'], 0], ['!', ['get', 'dim']]],
       layout: {
         'icon-image': ['concat', 'arrow-', ['get', 'c']],
         'icon-rotate': ['get', 'az'],
         'icon-rotation-alignment': 'map',
-        'icon-size': ICON_SIZE,
+        'icon-size': VEH_SIZE,
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
         'symbol-sort-key': ['get', 'z'],
       },
-      paint: { 'icon-opacity': dimmed(1, 0.18) },
+      paint: { 'icon-opacity': dimmed(1, 0, 0.45) },
     })
     m.addLayer({
       id: 'veh-body',
@@ -301,17 +320,17 @@
       source: 'vehicles',
       layout: {
         'icon-image': ['concat', 'body-', ['get', 'type'], '-', ['get', 'c']],
-        'icon-size': ICON_SIZE,
+        'icon-size': VEH_SIZE,
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
         'text-field': ['get', 'line'],
         'text-font': ['Noto Sans Bold'],
-        'text-size': ['step', ['zoom'], 0, 12, ['case', ['>=', ['length', ['get', 'line']], 3], 9.5, 11.5]],
+        'text-size': LABEL_SIZE,
         'text-allow-overlap': true,
         'text-ignore-placement': true,
         'symbol-sort-key': ['get', 'z'],
       },
-      paint: { 'text-color': '#ffffff', 'icon-opacity': dimmed(1, 0.22), 'text-opacity': dimmed(1, 0.3) },
+      paint: { 'text-color': '#ffffff', 'icon-opacity': dimmed(1, 0.28, 0.5), 'text-opacity': dimmed(1, 0, 0.6) },
     })
 
     const box = (p: { x: number; y: number }, r: number): [PointLike, PointLike] => [
@@ -348,6 +367,14 @@
         [17.65, 48.4],
       ],
       attributionControl: false,
+      locale: {
+        'NavigationControl.ZoomIn': 'Priblížiť',
+        'NavigationControl.ZoomOut': 'Oddialiť',
+        'GeolocateControl.FindMyLocation': 'Moja poloha',
+        'GeolocateControl.LocationNotAvailable': 'Poloha nie je dostupná',
+        'AttributionControl.ToggleAttribution': 'Zdroje dát',
+        'AttributionControl.MapFeedback': 'Nahlásiť chybu mapy',
+      },
       dragRotate: false,
       pitchWithRotate: false,
     })
@@ -366,6 +393,8 @@
       'top-right',
     )
     m.on('load', () => {
+      // The compact attribution starts open and covers the bottom of a phone screen.
+      el.querySelector('.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')
       setup(m)
       loaded = true
     })
@@ -384,7 +413,7 @@
 
   // Filters, selection, the active line or feed state changed: redraw at the current frame.
   $effect(() => {
-    void [app.filters, app.view, activeLine, feedDown()]
+    void [app.filters, app.view, activeLine, selectedDir, feedDown()]
     if (loaded) untrack(() => render(progress()))
   })
 

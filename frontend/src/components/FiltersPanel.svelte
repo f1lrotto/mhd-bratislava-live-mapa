@@ -1,5 +1,6 @@
 <script lang="ts">
   import { BAND_COLORS, BAND_LABELS, NO_DATA_COLOR, STALE_COLOR, TYPE_PLURAL } from '../lib/format'
+  import { passes } from '../lib/filter'
   import { shapeSvg } from '../lib/markers'
   import { app, filtersActive, setFilters } from '../lib/state.svelte'
   import type { VehicleType } from '../lib/types'
@@ -8,10 +9,14 @@
 
   const TYPES: VehicleType[] = ['tram', 'trolleybus', 'bus']
   const f = $derived(app.filters)
-  const shown = $derived((app.live?.vehicles ?? []).length)
+  const total = $derived((app.live?.vehicles ?? []).length)
+  const shown = $derived((app.live?.vehicles ?? []).filter((v) => passes(v, f)).length)
 
   function toggleType(t: VehicleType) {
-    setFilters({ types: f.types.includes(t) ? f.types.filter((x) => x !== t) : [...f.types, t] })
+    // No type filter means all are on; tapping one turns it off.
+    const on = f.types.length ? f.types : TYPES
+    const next = on.includes(t) ? on.filter((x) => x !== t) : [...on, t]
+    setFilters({ types: next.length === TYPES.length ? [] : next })
   }
   function toggleLine(l: string) {
     setFilters({ lines: f.lines.includes(l) ? f.lines.filter((x) => x !== l) : [...f.lines, l] })
@@ -19,7 +24,7 @@
   const legend = [...BAND_COLORS, NO_DATA_COLOR].map((c, i) => ({ c, label: BAND_LABELS[i] }))
 </script>
 
-<Panel label="Filtre">
+<Panel tall label="Filtre">
   {#snippet header()}
     <strong>Filtre a legenda</strong>
   {/snippet}
@@ -27,7 +32,7 @@
   <h3 class="section">Druh</h3>
   <div class="toggles">
     {#each TYPES as t (t)}
-      <button class="toggle" aria-pressed={f.types.includes(t)} onclick={() => toggleType(t)}>
+      <button class="toggle" aria-pressed={!f.types.length || f.types.includes(t)} onclick={() => toggleType(t)}>
         {@html shapeSvg(t, '#5b6470', 16)}
         {TYPE_PLURAL[t]}
       </button>
@@ -37,6 +42,10 @@
     <input type="checkbox" checked={f.late} onchange={(e) => setFilters({ late: e.currentTarget.checked })} />
     Len meškajúce 3+ min
   </label>
+
+  <p class="count" class:empty={!shown && total}>
+    {#if total && !shown}Filtrom nezodpovedá žiadne vozidlo.{:else}Zobrazených {shown} z {total} vozidiel.{/if}
+  </p>
 
   {#if filtersActive()}
     <button class="secondary" onclick={() => setFilters({ types: [], lines: [], late: false })}>Zrušiť filtre</button>
@@ -54,7 +63,7 @@
       <li>{@html shapeSvg(t, '#5b6470', 16)} {TYPE_PLURAL[t].toLowerCase()}</li>
     {/each}
   </ul>
-  <p class="muted small">Šípka pri značke ukazuje smer jazdy. Z {shown} vozidiel na mape.</p>
+  <p class="muted small">Šípka pri značke ukazuje smer jazdy.</p>
 
   <h3 class="section">Linky {f.lines.length ? `(${f.lines.length})` : ''}</h3>
   <LineGrid selected={f.lines} onpick={toggleLine} />
@@ -81,6 +90,15 @@
   .toggle[aria-pressed='true'] {
     background: #fff;
     border-color: var(--text);
+  }
+  .count {
+    margin: 8px 0 0;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .count.empty {
+    color: var(--bad-text);
+    font-weight: 600;
   }
   .switch {
     display: flex;

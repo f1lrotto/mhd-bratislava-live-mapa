@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { navigate } from '../lib/state.svelte'
+  import { app, navigate } from '../lib/state.svelte'
   import LineGrid from './LineGrid.svelte'
   import Panel from './Panel.svelte'
 
   let query = $state('')
 </script>
 
-<Panel label="Linky">
+<Panel tall label="Linky">
   {#snippet header()}
     <strong>Vyberte linku</strong>
   {/snippet}
@@ -18,6 +18,10 @@
     bind:value={query}
     inputmode="search"
     autocomplete="off"
+    onkeydown={(e) => {
+      const q = query.trim().toUpperCase()
+      if (e.key === 'Enter' && app.lines[q]) navigate({ kind: 'line', line: q, dir: null })
+    }}
   />
   <p class="hint muted small">Číslo pri linke je počet jej vozidiel na mape.</p>
   <LineGrid {query} onpick={(line) => navigate({ kind: 'line', line, dir: null })} />

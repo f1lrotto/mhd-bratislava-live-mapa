@@ -90,21 +90,21 @@
       <span class="logo" aria-hidden="true"></span>
       <span class="brand-text">MHD <b>naživo</b></span>
     </button>
-    <div class="fresh" class:bad={down} role="status" title="Kedy server naposledy načítal polohy z DPB">
+    <div class="fresh" class:bad={down} title="Kedy server naposledy načítal polohy z DPB">
       <span class="pulse" aria-hidden="true"></span>
       <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
     </div>
     <nav>
-      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'}>
+      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
         <span>Linky</span>
       </button>
-      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'}>
+      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'} aria-label="Filtre a legenda">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16l-6 7v5l-4 2v-7z" /></svg>
         <span>Filtre</span>
         {#if nFilters}<span class="count" aria-label="{nFilters} aktívne">{nFilters}</span>{/if}
       </button>
-      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'}>
+      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'} aria-label="Stav dopravy">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M12 19V5M19 19v-6" /></svg>
         <span>Stav</span>
       </button>
@@ -116,7 +116,8 @@
       {#if staticError}
         Nepodarilo sa načítať linky a zastávky ({staticError}).
       {:else if app.live}
-        Polohy vozidiel sa {age != null ? `${Math.floor(age / 60)} min` : ''} neaktualizovali. Zobrazujeme posledné známe, sivou.
+        {age != null ? `Polohy vozidiel sa ${Math.floor(age / 60)} min neaktualizovali.` : 'Polohy vozidiel sa neaktualizujú.'}
+        Zobrazujeme posledné známe polohy (sivé).
       {:else}
         Polohy vozidiel sa nedajú načítať. Skúšame znova.
       {/if}
@@ -124,7 +125,7 @@
   {/if}
 
   {#if app.view.kind === 'none' && app.live && !down}
-    <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>Ťuknite na vozidlo alebo vyberte linku</button>
+    <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>Vyberte vozidlo alebo linku</button>
   {/if}
 
   {#key app.view.kind === 'line' ? `line-${app.view.line}` : app.view.kind}
@@ -284,7 +285,7 @@
     z-index: 4;
     left: 50%;
     transform: translateX(-50%);
-    bottom: calc(24px + env(safe-area-inset-bottom));
+    bottom: calc(52px + env(safe-area-inset-bottom));
     background: var(--text);
     color: #fff;
     padding: 12px 18px;
@@ -302,6 +303,11 @@
     }
   }
   @media (max-width: 767.98px) {
+    .banner {
+      left: 10px;
+      transform: none;
+      width: calc(100% - 76px);
+    }
     .brand-text {
       display: none;
     }
