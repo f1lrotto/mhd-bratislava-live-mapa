@@ -96,6 +96,7 @@ def build(gtfs: dict, osm: dict) -> dict:
     # Stop sequence and first departure of every trip.
     seq: dict[str, list[tuple[int, str]]] = defaultdict(list)
     first_dep: dict[str, tuple[int, int]] = {}
+    last_arr: dict[str, tuple[int, int]] = {}
     for st in gtfs["stop_times"]:
         tid = st["trip_id"]
         n = int(st["stop_sequence"])
@@ -103,6 +104,9 @@ def build(gtfs: dict, osm: dict) -> dict:
         dep = st["departure_time"] or st["arrival_time"]
         if dep and (tid not in first_dep or n < first_dep[tid][0]):
             first_dep[tid] = (n, _secs(dep))
+        arr = st["arrival_time"] or st["departure_time"]
+        if arr and (tid not in last_arr or n > last_arr[tid][0]):
+            last_arr[tid] = (n, _secs(arr))
 
     # Group trips by line and direction.
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
@@ -177,6 +181,12 @@ def build(gtfs: dict, osm: dict) -> dict:
             "stops": main,
             "stopDist": [round(d) for d in stop_dist],
             "length": round(poly.length),
+            # Median scheduled run time of the main pattern, used to turn distance gaps into time.
+            "duration": _median_duration(
+                [t for t in trips if tuple(s for _, s in sorted(seq[t["trip_id"]])) == tuple(main)],
+                first_dep,
+                last_arr,
+            ),
         }
 
     for line in departures:
@@ -228,6 +238,16 @@ def build(gtfs: dict, osm: dict) -> dict:
         "stops": out_stops,
         "service": {"calendar": calendar, "departures": departures},
     }
+
+
+def _median_duration(trips: list[dict], first_dep: dict, last_arr: dict) -> int | None:
+    ds = sorted(
+        last_arr[t["trip_id"]][1] - first_dep[t["trip_id"]][1]
+        for t in trips
+        if t["trip_id"] in first_dep and t["trip_id"] in last_arr
+    )
+    ds = [d for d in ds if d > 0]
+    return ds[len(ds) // 2] if ds else None
 
 
 def _line_sort_key(line: str) -> tuple:
