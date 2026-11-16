@@ -1,12 +1,39 @@
 <script lang="ts">
-  import { agoText, bandColor, delayText, TYPE_LABELS } from '../lib/format'
+  import { getJson, poll } from '../lib/api'
+  import { agoText, bandColor, delayText, hm, TYPE_LABELS } from '../lib/format'
   import { app, feedDown, navigate } from '../lib/state.svelte'
+  import type { ServiceState, VehicleDetail } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
 
   let { key }: { key: string } = $props()
 
-  const v = $derived(app.live?.vehicles.find((x) => x.key === key) ?? null)
+  let detail = $state.raw<VehicleDetail | null>(null)
+  let allStops = $state(false)
+  $effect(() => {
+    const k = key
+    detail = null
+    return poll(async () => {
+      try {
+        const d = await getJson<VehicleDetail>(`/api/vehicle/${encodeURIComponent(k)}`)
+        if (k === key) detail = d
+      } catch {
+        /* unknown vehicle: the live list says so */
+      }
+    })
+  })
+
+  const v = $derived(app.live?.vehicles.find((x) => x.key === key) ?? detail?.vehicle ?? null)
+  const trip = $derived(detail?.vehicle.key === key ? detail.trip : null)
+  const nextStops = $derived(trip ? (allStops ? trip.stops : trip.stops.slice(0, 8)) : [])
+  const running = $derived(v?.service === 'running')
+  const SERVICE: Record<ServiceState, string> = {
+    running: 'V prevádzke',
+    layover: 'Na konečnej, čaká na odchod',
+    depot: 'Ide do depa',
+    parked: 'Stojí / mimo prevádzky',
+    unknown: 'Stav nevieme určiť',
+  }
   const lv = $derived(v?.line && app.lineView?.line === v.line ? app.lineView : null)
   const dir = $derived(lv?.directions.find((d) => d.id === v?.dir) ?? null)
   const rv = $derived(dir?.vehicles.find((x) => x.key === key) ?? null)
@@ -39,17 +66,24 @@
     <p class="note">Vozidlo č. {key} teraz nie je v prevádzke alebo nehlási polohu.</p>
   {:else}
     <div class="facts">
-      <div class="fact">
-        <span class="label">Meškanie</span>
-        <span class="value" style:color={bandColor(v.band)}>{delayText(v.delay, v.delayCapped)}</span>
-      </div>
+      {#if running}
+        <div class="fact">
+          <span class="label">Meškanie</span>
+          <span class="value" style:color={bandColor(v.band)}>{delayText(v.delay, v.delayCapped)}</span>
+        </div>
+      {:else}
+        <div class="fact">
+          <span class="label">Stav</span>
+          <span class="value small-value">{SERVICE[v.service] ?? SERVICE.unknown}</span>
+        </div>
+      {/if}
       <div class="fact">
         <span class="label">Poloha zmenená</span>
         <span class="value small-value">{agoText(movedAgo)}</span>
       </div>
     </div>
 
-    {#if v.delayCapped}
+    {#if v.delayCapped && running}
       <p class="note">Systém DPB nehlási viac ako 15 minút, skutočné meškanie môže byť vyššie.</p>
     {/if}
     {#if feedDown()}
@@ -58,7 +92,45 @@
       <p class="note warn">Poloha sa viac ako 10 minút nezmenila. Vozidlo môže stáť alebo nehlásiť polohu.</p>
     {/if}
 
-    {#if dir && rv}
+    {#if trip}
+      <h3 class="section">
+        {trip.waiting ? `Odchod z konečnej o ${hm(trip.start)}` : 'Ďalšie zastávky'}
+      </h3>
+      <ol class="stops">
+        {#each nextStops as s (s.index)}
+          {@const changed = s.predicted && hm(s.predicted) !== hm(s.scheduled)}
+          <li class:end={s.arrival}>
+            <span class="tl" aria-hidden="true"></span>
+            <span class="st-time">
+              {#if changed}
+                <strong>{hm(s.predicted)}</strong> <s class="muted small">{hm(s.scheduled)}</s>
+              {:else}
+                <strong>{hm(s.predicted ?? s.scheduled)}</strong>
+              {/if}
+            </span>
+            {#if s.station}
+              <button class="st-name" onclick={() => navigate({ kind: 'station', code: s.station!, stop: s.stopId })}>
+                {s.name}{#if s.platform}<span class="muted small">&nbsp;· {s.platform}</span>{/if}
+              </button>
+            {:else}
+              <span class="st-name">{s.name}</span>
+            {/if}
+          </li>
+        {/each}
+      </ol>
+      {#if trip.stops.length > 8}
+        <button class="more" onclick={() => (allStops = !allStops)} aria-expanded={allStops}>
+          {allStops ? 'Menej zastávok' : `Všetky zastávky (${trip.stops.length})`}
+        </button>
+      {/if}
+      {#if trip.uncertain}
+        <p class="note">Meškanie je 15+ min, časy môžu byť ešte neskôr.</p>
+      {/if}
+    {:else if detail && running}
+      <p class="note">Spoj z cestovného poriadku sme vozidlu nepriradili, ďalšie zastávky preto nevieme.</p>
+    {/if}
+
+    {#if dir && rv && running}
       <p class="where">
         {#if rv.offRoute}
           Mimo trasy smeru {dir.headsign}.
@@ -70,7 +142,7 @@
           Za zastávkou <strong>{dir.stops[rv.lastStop]?.name}</strong>, {Math.round((rv.along / dir.length) * 100)} % trasy.
         {/if}
       </p>
-    {:else if unmatched}
+    {:else if unmatched && !(unmatched.reason === 'to_depot' && v.service === 'depot')}
       <p class="note">{REASONS[unmatched.reason] ?? ''}</p>
     {/if}
 
@@ -120,6 +192,77 @@
   .small-value {
     font-size: 1.05rem;
     padding-top: 4px;
+  }
+  .stops {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .stops li {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
+  }
+  .tl {
+    position: relative;
+    align-self: stretch;
+    width: 14px;
+    flex: none;
+  }
+  .tl::before {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: #c9ced5;
+  }
+  .stops li:first-child .tl::before {
+    top: 50%;
+  }
+  .stops li:last-child .tl::before {
+    bottom: 50%;
+  }
+  .tl::after {
+    content: '';
+    position: absolute;
+    left: 2px;
+    top: calc(50% - 5px);
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #fff;
+    border: 2.5px solid var(--text);
+    box-sizing: border-box;
+  }
+  .stops li.end .tl::after {
+    background: var(--text);
+  }
+  .st-time {
+    width: 4.6em;
+    flex: none;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .st-name {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+    padding: 8px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  button.st-name:hover {
+    text-decoration: underline;
+  }
+  .more {
+    color: var(--accent);
+    font-weight: 600;
+    padding: 8px 0;
   }
   .where {
     margin: 4px 0 14px;

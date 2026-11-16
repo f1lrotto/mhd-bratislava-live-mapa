@@ -1,12 +1,15 @@
-import type { CityStatus, LineInfo, LineView, Live, StopInfo, VehicleType } from './types'
+import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo, VehicleType } from './types'
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
-//   /linka/83?smer=1   /vozidlo/1843   /zastavka/<stop id>   /stav   /linky   /filtre
+//   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre
+//   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
+// Old /zastavka/<stop id> links are mapped to the stop's station by the station panel.
 export type View =
   | { kind: 'none' }
   | { kind: 'line'; line: string; dir: string | null }
   | { kind: 'vehicle'; key: string }
-  | { kind: 'stop'; id: string }
+  | { kind: 'station'; code: string; stop: string | null }
+  | { kind: 'plan'; from: string | null; to: string | null; at: string | null; opt: number | null }
   | { kind: 'status' }
   | { kind: 'lines' }
   | { kind: 'filters' }
@@ -30,6 +33,15 @@ class AppState {
   fetchError = $state.raw<string | null>(null)
   lines = $state.raw<Record<string, LineInfo>>({})
   stops = $state.raw<Record<string, StopInfo>>({})
+  stations = $state.raw<Record<string, StationInfo>>({})
+  /** The last plan response, kept while a vehicle opened from it is shown so "back" is instant. */
+  plan = $state.raw<{ query: string; data: Plan | null; error: string | null; loading: boolean } | null>(null)
+  /** The planner field the next map tap fills, while "Vybrať na mape" is on. */
+  pick = $state.raw<'from' | 'to' | null>(null)
+  /** Display names of coordinate points ("Moja poloha", "Bod na mape"), keyed by the "lat,lon" value. */
+  placeNames = $state.raw<Record<string, string>>({})
+  /** The previous history entry is another panel of this app, so the panel shows a back button. */
+  canBack = $state.raw(false)
   view = $state.raw<View>({ kind: 'none' })
   filters = $state.raw<Filters>({ types: [], lines: [], late: false })
   /** The line whose view is wanted now; responses for other lines are dropped. */
@@ -56,7 +68,11 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   let view: View = { kind: 'none' }
   if (parts[0] === 'linka' && parts[1]) view = { kind: 'line', line: parts[1], dir: q.get('smer') }
   else if (parts[0] === 'vozidlo' && parts[1]) view = { kind: 'vehicle', key: parts[1] }
-  else if (parts[0] === 'zastavka' && parts[1]) view = { kind: 'stop', id: parts[1] }
+  else if (parts[0] === 'zastavka' && parts[1]) view = { kind: 'station', code: parts[1], stop: q.get('nastupiste') }
+  else if (parts[0] === 'trasa') {
+    const n = parseInt(q.get('moznost') ?? '', 10)
+    view = { kind: 'plan', from: q.get('z'), to: q.get('do'), at: q.get('cas'), opt: n >= 1 ? n - 1 : null }
+  }
   else if (parts[0] === 'stav') view = { kind: 'status' }
   else if (parts[0] === 'linky') view = { kind: 'lines' }
   else if (parts[0] === 'filtre') view = { kind: 'filters' }
@@ -82,8 +98,16 @@ export function buildUrl(view: View, filters: Filters): string {
     case 'vehicle':
       path = `/vozidlo/${encodeURIComponent(view.key)}`
       break
-    case 'stop':
-      path = `/zastavka/${encodeURIComponent(view.id)}`
+    case 'station':
+      path = `/zastavka/${encodeURIComponent(view.code)}`
+      if (view.stop) q.set('nastupiste', view.stop)
+      break
+    case 'plan':
+      path = '/trasa'
+      if (view.from) q.set('z', view.from)
+      if (view.to) q.set('do', view.to)
+      if (view.at) q.set('cas', view.at)
+      if (view.opt != null) q.set('moznost', String(view.opt + 1))
       break
     case 'status':
       path = '/stav'
@@ -98,7 +122,7 @@ export function buildUrl(view: View, filters: Filters): string {
   if (filters.types.length) q.set('typ', filters.types.map((t) => TYPE_NAME[t]).join(','))
   if (filters.lines.length) q.set('linky', filters.lines.join(','))
   if (filters.late) q.set('meskanie', '1')
-  const qs = q.toString().replaceAll('%2C', ',')
+  const qs = q.toString().replaceAll('%2C', ',').replaceAll('%3A', ':')
   return qs ? `${path}?${qs}` : path
 }
 
@@ -111,8 +135,9 @@ export function navigate(view: View, opts: { replace?: boolean } = {}): void {
     const a = document.activeElement as HTMLElement | null
     opener = a && a !== document.body ? a : (document.querySelector('.maplibregl-canvas') as HTMLElement | null)
   }
+  const prev = app.view.kind
   app.view = view
-  syncUrl(opts.replace)
+  syncUrl(opts.replace, prev)
 }
 
 export function setFilters(f: Partial<Filters>): void {
@@ -120,11 +145,20 @@ export function setFilters(f: Partial<Filters>): void {
   syncUrl(true)
 }
 
-function syncUrl(replace = false): void {
+function syncUrl(replace = false, prev?: View['kind']): void {
   const url = buildUrl(app.view, app.filters)
   if (url === location.pathname + location.search) return
-  if (replace) history.replaceState(null, '', url)
-  else history.pushState(null, '', url)
+  if (replace || prev === undefined) history.replaceState(history.state, '', url)
+  else {
+    history.pushState({ prev }, '', url)
+    syncBack()
+  }
+}
+
+/** Read from history whether "back" returns to another panel. */
+export function syncBack(): void {
+  const prev = (history.state as { prev?: string } | null)?.prev
+  app.canBack = prev != null && prev !== 'none' && app.view.kind !== 'none'
 }
 
 export function closePanel(): void {

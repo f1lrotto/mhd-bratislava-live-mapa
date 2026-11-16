@@ -74,3 +74,70 @@ export function compareLines(a: string, b: string): number {
   const y = lineSortKey(b)
   return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2])
 }
+
+// --- times: the timetable is Bratislava time, whatever the phone's zone ----------------------------
+
+export const TZ = 'Europe/Bratislava'
+const HM = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false })
+const DAY = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'numeric' })
+
+/** "08:02" in Bratislava time. */
+export function hm(iso: string | null | undefined): string {
+  if (!iso) return '–'
+  return HM.format(new Date(iso))
+}
+
+/** "ut 17. 11." in Bratislava time. */
+export function dayText(iso: string): string {
+  return DAY.format(new Date(iso))
+}
+
+/** Bratislava's UTC offset in minutes at a given instant. */
+function tzOffsetMin(ms: number): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+    })
+      .formatToParts(new Date(ms))
+      .map((x) => [x.type, x.value]),
+  )
+  const wall = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second)
+  return Math.round((wall - Math.floor(ms / 1000) * 1000) / 60000)
+}
+
+/** An ISO instant as the value of a datetime-local input, in Bratislava wall time. */
+export function toLocalInput(iso: string): string {
+  const ms = Date.parse(iso)
+  const d = new Date(ms + tzOffsetMin(ms) * 60000)
+  return d.toISOString().slice(0, 16)
+}
+
+/** A datetime-local value (Bratislava wall time) as ISO with the offset, e.g. 2026-11-17T08:00:00+01:00. */
+export function fromLocalInput(v: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(v)
+  if (!m) return null
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5])
+  // The offset at the wall time read as UTC is right except within an hour of a DST switch.
+  let off = tzOffsetMin(wall - tzOffsetMin(wall) * 60000)
+  const sign = off < 0 ? '-' : '+'
+  off = Math.abs(off)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00${sign}${pad(Math.floor(off / 60))}:${pad(off % 60)}`
+}
+
+/** Minutes from now (server clock) until an ISO time, rounded down, never negative. */
+export function minsUntil(iso: string, nowMs: number): number {
+  return Math.max(0, Math.floor((Date.parse(iso) - nowMs) / 60000))
+}
+
+/** "12 min" / "1 h 05 min" for a duration in seconds. */
+export function durationText(s: number): string {
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} min`
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')} min`
+}
+
+/** Slovak text search: case- and diacritics-insensitive ("hlavna" matches "Hlavná"). */
+export function fold(s: string): string {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+}

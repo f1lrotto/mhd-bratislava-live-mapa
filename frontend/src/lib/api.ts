@@ -1,7 +1,7 @@
 import { app, POLL_MS } from './state.svelte'
-import type { CityStatus, LineInfo, LineView, Live, StopInfo } from './types'
+import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo } from './types'
 
-async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
+export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal, headers: { Accept: 'application/json' } })
   if (!r.ok) {
     let msg = `HTTP ${r.status}`
@@ -16,12 +16,14 @@ async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
 }
 
 export async function loadStatic(): Promise<void> {
-  const [lines, stops] = await Promise.all([
+  const [lines, stops, stations] = await Promise.all([
     getJson<Record<string, LineInfo>>('/api/static/lines.json'),
     getJson<Record<string, StopInfo>>('/api/static/stops.json'),
+    getJson<Record<string, StationInfo>>('/api/static/stations.json'),
   ])
   app.lines = lines
   app.stops = stops
+  app.stations = stations
 }
 
 export async function refreshLive(): Promise<void> {
@@ -54,6 +56,29 @@ export async function refreshStatus(): Promise<void> {
     app.status = await getJson<CityStatus>('/api/status')
   } catch {
     /* the panel shows the last data or a loading state */
+  }
+}
+
+/** The planner query for the current from/to/time, or null while an end is missing. */
+export function planQuery(from: string | null, to: string | null, at: string | null): string | null {
+  if (!from || !to) return null
+  const q = new URLSearchParams({ from, to })
+  if (at) q.set('at', at)
+  if (app.placeNames[from]) q.set('fromName', app.placeNames[from])
+  if (app.placeNames[to]) q.set('toName', app.placeNames[to])
+  return `/api/plan?${q}`
+}
+
+/** Fetch a plan into app.plan; the previous result stays on screen while the same query refreshes. */
+export async function refreshPlan(query: string): Promise<void> {
+  const same = app.plan?.query === query
+  app.plan = { query, data: same ? (app.plan?.data ?? null) : null, error: null, loading: true }
+  try {
+    const data = await getJson<Plan>(query)
+    if (app.plan?.query === query) app.plan = { query, data, error: null, loading: false }
+  } catch (e) {
+    if (app.plan?.query === query)
+      app.plan = { query, data: same ? (app.plan?.data ?? null) : null, error: (e as Error).message, loading: false }
   }
 }
 

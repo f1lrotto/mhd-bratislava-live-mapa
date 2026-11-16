@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte'
-  import { closePanel } from '../lib/state.svelte'
+  import { app, closePanel } from '../lib/state.svelte'
 
   let {
     label,
@@ -41,6 +41,14 @@
       aria-expanded={expanded}
     ></button>
     <header>
+      {#if app.canBack}
+        <!-- Returns to the panel this one was opened from (e.g. the plan behind a vehicle). -->
+        <button class="close back" onclick={() => history.back()} aria-label="Späť">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
+            ><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg
+          >
+        </button>
+      {/if}
       <div class="title">{@render header()}</div>
       <button class="close" onclick={closePanel} aria-label="Zavrieť">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
@@ -86,6 +94,9 @@
     display: grid;
     place-items: center;
     color: var(--muted);
+  }
+  .back {
+    margin-left: -10px;
   }
   .close:hover {
     background: var(--hover);

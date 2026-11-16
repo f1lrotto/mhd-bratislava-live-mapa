@@ -4,10 +4,12 @@
   import 'maplibre-gl/dist/maplibre-gl.css'
   import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
   import { onMount, untrack } from 'svelte'
+  import { planQuery } from './lib/api'
   import { passes } from './lib/filter'
-  import { addMarkerImages } from './lib/markers'
+  import { addMarkerImages, addPinImages } from './lib/markers'
+  import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { app, closePanel, feedDown, navigate } from './lib/state.svelte'
-  import type { LineView, Live } from './lib/types'
+  import type { LineView, Live, PlanOption } from './lib/types'
 
   let { activeLine, selectedDir }: { activeLine: string | null; selectedDir: string | null } = $props()
 
@@ -21,6 +23,19 @@
   let el: HTMLDivElement
   let map: MlMap | undefined
   let loaded = $state(false)
+
+  // The planner option drawn on the map: the selected one, or the first while the list shows.
+  const planOpt = $derived.by((): PlanOption | null => {
+    const v = app.view
+    if (v.kind !== 'plan' || !app.plan || app.plan.query !== planQuery(v.from, v.to, v.at)) return null
+    const opts = app.plan.data?.options ?? []
+    return opts.length ? opts[Math.min(v.opt ?? 0, opts.length - 1)] : null
+  })
+  /** Live vehicles of the drawn option's rides; everything else dims. Null outside the planner. */
+  const planKeys = $derived.by(() => {
+    if (app.view.kind !== 'plan' || !planOpt) return null
+    return new Set(planOpt.legs.flatMap((l) => (l.kind === 'ride' && l.vehicle ? [l.vehicle] : [])))
+  })
 
   // --- marker animation ------------------------------------------------------------------------
   type LonLat = [number, number]
@@ -75,12 +90,16 @@
     const features = []
     for (const v of live.vehicles) {
       const sel = v.key === selKey
-      if (!sel && !passes(v, app.filters)) continue
+      // The planned trip's vehicles: always shown, enlarged and tagged.
+      const mine = planKeys?.has(v.key) ?? false
+      if (!sel && !mine && !passes(v, app.filters)) continue
       const p = at(v.key, t) ?? [v.lon, v.lat]
-      const dim = activeLine != null && v.line !== activeLine && !sel
+      const dim = (activeLine != null && v.line !== activeLine && !sel) || (planKeys != null && !mine && !sel)
       // On the active line, vehicles of the other directions stay visible but softer.
       const other = !dim && !sel && activeLine != null && selectedDir != null && v.dir != null && v.dir !== selectedDir
-      const hi = activeLine != null && !dim && !other
+      // Laying over, going to the depot, parked: grey, smaller and fainter than vehicles in service.
+      const idle = v.service != null && v.service !== 'running' && !sel && !mine && !dim
+      const hi = (activeLine != null && !dim && !other && !idle) || mine
       features.push({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: p },
@@ -88,13 +107,15 @@
           key: v.key,
           line: v.line ?? '',
           type: v.type,
-          c: down || v.stale || dim ? 's' : v.band == null ? 'n' : String(v.band),
+          c: down || v.stale || dim || idle ? 's' : v.band == null ? 'n' : String(v.band),
           az: v.az ?? -1,
           dim,
           other,
           hi,
           sel,
-          z: sel ? 3 : dim ? 0 : 1,
+          idle,
+          mine,
+          z: sel ? 3 : mine ? 2 : dim ? 0 : idle ? 0.5 : 1,
         },
       })
     }
@@ -131,6 +152,64 @@
       maxZoom: 15,
       duration: 700,
     })
+  }
+
+  function fitCoords(coords: [number, number][]): void {
+    if (!map || !coords.length) return
+    const b = new maplibregl.LngLatBounds()
+    for (const c of coords) b.extend(c)
+    const c = covered()
+    const pad = isMobile() ? 36 : 56
+    map.fitBounds(b, {
+      padding: { top: 72 + pad, bottom: c.bottom + pad, left: c.left + pad, right: 56 + pad },
+      maxZoom: 16,
+      duration: 700,
+    })
+  }
+
+  // --- planner overlay --------------------------------------------------------------------------
+  function updatePlan(): void {
+    if (!map) return
+    const v = app.view
+    const lines = []
+    const stops = []
+    const ends = []
+    if (v.kind === 'plan') {
+      const o = planOpt
+      let rides = 0
+      for (const [i, l] of (o?.legs ?? []).entries()) {
+        lines.push({
+          type: 'Feature' as const,
+          geometry: { type: 'LineString' as const, coordinates: l.coords },
+          properties: { kind: l.kind, color: l.kind === 'ride' ? l.color : '#5b6470' },
+        })
+        if (l.kind !== 'ride') continue
+        const last = i === o!.legs.length - 1
+        const pt = (lon: number, lat: number, role: string, name: string, id: string | null) => ({
+          type: 'Feature' as const,
+          geometry: { type: 'Point' as const, coordinates: [lon, lat] },
+          properties: { role, name, color: l.color, id: id ?? '' },
+        })
+        for (const st of l.stops.slice(1, -1)) stops.push(pt(st.lon, st.lat, 'mid', st.name, st.stop))
+        const boardName = l.from.platform ? `${l.from.name} (${l.from.platform})` : l.from.name
+        stops.push(pt(l.from.lon, l.from.lat, rides ? 'transfer' : 'board', boardName, l.from.stop))
+        // Where a ride ends: a ring, unless the next ride starts there (its transfer ring) or it is
+        // the end of the trip (the destination pin).
+        if (!last && o!.legs[i + 1]?.kind !== 'ride') stops.push(pt(l.to.lon, l.to.lat, 'alight', l.to.name, l.to.stop))
+        rides++
+      }
+      for (const [role, val] of [['from', v.from], ['to', v.to]] as const) {
+        // Before the first result, the destination is where the user put it; after, where the trip ends.
+        // A trip that starts with a ride has its boarding stop marker at the origin instead.
+        if (role === 'from' && o?.legs[0]?.kind === 'ride') continue
+        const end = role === 'from' ? o?.legs[0]?.from : o?.legs.at(-1)?.to
+        const c = end ? [end.lon, end.lat] : placeCoords(val)
+        if (c) ends.push({ type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: c }, properties: { role, name: placeLabel(val) } })
+      }
+    }
+    ;(map.getSource('plan') as GeoJSONSource).setData({ type: 'FeatureCollection', features: lines })
+    ;(map.getSource('plan-stops') as GeoJSONSource).setData({ type: 'FeatureCollection', features: stops })
+    ;(map.getSource('plan-ends') as GeoJSONSource).setData({ type: 'FeatureCollection', features: ends })
   }
 
   // --- route overlay ----------------------------------------------------------------------------
@@ -170,21 +249,27 @@
   const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 10, 0.42, 12, 0.66, 14, 0.88, 16, 1] as any
   const dimmed = (on: number, off: number, other = on) =>
     ['case', ['get', 'dim'], off, ['get', 'other'], other, on] as any
-  // The active line's vehicles are 30% larger and always labelled.
+  // The active line's (or planned trip's) vehicles are 30% larger and always labelled;
+  // vehicles out of service are 30% smaller.
   const VEH_SIZE = [
     'interpolate', ['linear'], ['zoom'],
-    ...[[10, 0.42], [12, 0.66], [14, 0.88], [16, 1]].flatMap(([z, k]) => [z, ['case', ['get', 'hi'], Math.max(0.8, k * 1.3), k]]),
+    ...[[10, 0.42], [12, 0.66], [14, 0.88], [16, 1]].flatMap(([z, k]) => [
+      z,
+      ['case', ['get', 'hi'], Math.max(0.8, k * 1.3), ['get', 'idle'], k * 0.7, k],
+    ]),
   ] as any
   const LONG = ['>=', ['length', ['get', 'line']], 3]
   const LABEL_SIZE = [
     'step', ['zoom'],
     ['case', ['get', 'hi'], ['case', LONG, 9.5, 11], 0],
-    12, ['case', ['get', 'hi'], ['case', LONG, 10.5, 12.5], ['case', LONG, 9.5, 11.5]],
+    12, ['case', ['get', 'hi'], ['case', LONG, 10.5, 12.5], ['get', 'idle'], ['case', LONG, 7, 8], ['case', LONG, 9.5, 11.5]],
   ] as any
 
   function setup(m: MlMap): void {
     addMarkerImages(m)
-    for (const id of ['stops', 'route', 'route-stops', 'vehicles']) m.addSource(id, { type: 'geojson', data: EMPTY })
+    addPinImages(m)
+    for (const id of ['stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-stops', 'plan-ends', 'vehicles'])
+      m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
     m.addLayer(
@@ -215,6 +300,43 @@
       },
       firstLabel,
     )
+    m.addLayer(
+      {
+        id: 'plan-walk',
+        type: 'line',
+        source: 'plan',
+        filter: ['==', ['get', 'kind'], 'walk'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#5b6470',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 15, 6],
+          'line-dasharray': [0.1, 1.8],
+        },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'plan-casing',
+        type: 'line',
+        source: 'plan',
+        filter: ['==', ['get', 'kind'], 'ride'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 15, 15] },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'plan-ride',
+        type: 'line',
+        source: 'plan',
+        filter: ['==', ['get', 'kind'], 'ride'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10] },
+      },
+      firstLabel,
+    )
     m.addLayer({
       id: 'route-arrows',
       type: 'symbol',
@@ -233,32 +355,87 @@
       },
       paint: { 'text-color': '#ffffff' },
     })
+    // One marker per station from zoom 14; from 17 its platforms, each with its letter.
+    m.addLayer({
+      id: 'stations',
+      type: 'circle',
+      source: 'stations',
+      minzoom: 14,
+      maxzoom: 17,
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 16, 6.5],
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#4a525c',
+        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 14, 1.5, 16, 2.5],
+      },
+    })
     m.addLayer({
       id: 'stops',
       type: 'circle',
       source: 'stops',
-      minzoom: 15,
+      minzoom: 17,
       paint: {
-        'circle-radius': 4,
+        'circle-radius': 8,
         'circle-color': '#ffffff',
-        'circle-stroke-color': '#6b7480',
-        'circle-stroke-width': 1.5,
+        'circle-stroke-color': '#4a525c',
+        'circle-stroke-width': 2,
       },
     })
     m.addLayer({
       id: 'stops-label',
       type: 'symbol',
       source: 'stops',
-      minzoom: 16,
+      minzoom: 17,
+      layout: {
+        'text-field': ['get', 'plat'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 10,
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      },
+      paint: { 'text-color': '#1d232b' },
+    })
+    m.addLayer({
+      id: 'stations-label',
+      type: 'symbol',
+      source: 'stations',
+      minzoom: 15,
       layout: {
         'text-field': ['get', 'name'],
         'text-font': ['Noto Sans Regular'],
-        'text-size': 11,
+        'text-size': ['interpolate', ['linear'], ['zoom'], 15, 11, 17, 12.5],
         'text-anchor': 'top',
-        'text-offset': [0, 0.7],
+        'text-offset': ['step', ['zoom'], ['literal', [0, 0.8]], 17, ['literal', [0, 1.6]]],
         'text-optional': true,
       },
       paint: { 'text-color': '#4a525c', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+    })
+    // The open station, at any zoom.
+    m.addLayer({
+      id: 'station-sel',
+      type: 'circle',
+      source: 'station-sel',
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 6, 16, 11],
+        'circle-color': '#ffffff',
+        'circle-opacity': ['step', ['zoom'], 1, 17, 0],
+        'circle-stroke-color': '#1d232b',
+        'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 11, 3, 16, 5],
+      },
+    })
+    m.addLayer({
+      id: 'station-sel-label',
+      type: 'symbol',
+      source: 'station-sel',
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 13,
+        'text-anchor': 'top',
+        'text-offset': [0, 1.3],
+        'text-allow-overlap': true,
+      },
+      paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
     })
     m.addLayer({
       id: 'route-stops',
@@ -287,6 +464,73 @@
       },
       paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
     })
+    // Dimmed vehicles sit under the planned trip's stops; the rest above them.
+    m.addLayer({
+      id: 'veh-body-dim',
+      type: 'symbol',
+      source: 'vehicles',
+      filter: ['get', 'dim'],
+      layout: {
+        'icon-image': ['concat', 'body-', ['get', 'type'], '-', ['get', 'c']],
+        'icon-size': VEH_SIZE,
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      },
+      paint: { 'icon-opacity': 0.28 },
+    })
+    m.addLayer({
+      id: 'plan-stops',
+      type: 'circle',
+      source: 'plan-stops',
+      layout: { 'circle-sort-key': ['match', ['get', 'role'], 'mid', 0, 1] },
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, ['match', ['get', 'role'], 'mid', 2.5, 7], 15, ['match', ['get', 'role'], 'mid', 4, 8.5]],
+        'circle-color': ['match', ['get', 'role'], 'board', ['get', 'color'], '#ffffff'],
+        'circle-stroke-color': ['match', ['get', 'role'], 'board', '#ffffff', 'mid', ['get', 'color'], '#1d232b'],
+        'circle-stroke-width': ['match', ['get', 'role'], 'board', 3, 'mid', 2, 4],
+      },
+    })
+    m.addLayer({
+      id: 'plan-from',
+      type: 'circle',
+      source: 'plan-ends',
+      filter: ['==', ['get', 'role'], 'from'],
+      paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#1d232b', 'circle-stroke-width': 4.5 },
+    })
+    m.addLayer({
+      id: 'plan-label',
+      type: 'symbol',
+      source: 'plan-stops',
+      filter: ['!=', ['get', 'role'], 'mid'],
+      layout: {
+        'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 12,
+        'text-anchor': 'left',
+        'text-offset': [1.1, 0],
+        'text-optional': true,
+      },
+      paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+    })
+    m.addLayer({
+      id: 'plan-to',
+      type: 'symbol',
+      source: 'plan-ends',
+      filter: ['==', ['get', 'role'], 'to'],
+      layout: {
+        'icon-image': 'pin-to',
+        'icon-anchor': 'bottom',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+        'text-field': ['get', 'name'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 12.5,
+        'text-anchor': 'left',
+        'text-offset': [1.1, -1.4],
+        'text-optional': true,
+      },
+      paint: { 'text-color': '#a51428', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+    })
     m.addLayer({
       id: 'veh-sel',
       type: 'circle',
@@ -303,7 +547,7 @@
       id: 'veh-arrow',
       type: 'symbol',
       source: 'vehicles',
-      filter: ['all', ['>=', ['get', 'az'], 0], ['!', ['get', 'dim']]],
+      filter: ['all', ['>=', ['get', 'az'], 0], ['!', ['get', 'dim']], ['!', ['get', 'idle']]],
       layout: {
         'icon-image': ['concat', 'arrow-', ['get', 'c']],
         'icon-rotate': ['get', 'az'],
@@ -319,6 +563,7 @@
       id: 'veh-body',
       type: 'symbol',
       source: 'vehicles',
+      filter: ['!', ['get', 'dim']],
       layout: {
         'icon-image': ['concat', 'body-', ['get', 'type'], '-', ['get', 'c']],
         'icon-size': VEH_SIZE,
@@ -331,7 +576,27 @@
         'text-ignore-placement': true,
         'symbol-sort-key': ['get', 'z'],
       },
-      paint: { 'text-color': '#ffffff', 'icon-opacity': dimmed(1, 0.28, 0.5), 'text-opacity': dimmed(1, 0, 0.6) },
+      paint: {
+        'text-color': '#ffffff',
+        'icon-opacity': ['case', ['get', 'idle'], 0.7, dimmed(1, 0.28, 0.5)],
+        'text-opacity': ['case', ['get', 'idle'], 0.9, dimmed(1, 0, 0.6)],
+      },
+    })
+    m.addLayer({
+      id: 'veh-tag',
+      type: 'symbol',
+      source: 'vehicles',
+      filter: ['get', 'mine'],
+      layout: {
+        'text-field': 'Tvoj spoj',
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 11.5,
+        'text-anchor': 'bottom',
+        'text-offset': [0, -1.6],
+        'text-allow-overlap': true,
+        'text-ignore-placement': true,
+      },
+      paint: { 'text-color': '#0f6b37', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
     })
 
     const box = (p: { x: number; y: number }, r: number): [PointLike, PointLike] => [
@@ -340,16 +605,32 @@
     ]
     m.on('click', (e) => {
       const r = isMobile() ? 14 : 8
-      const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body'] })
+      if (app.pick) {
+        // Picking a planner end: a tapped station counts as that station, anywhere else as a point.
+        const end = app.pick
+        app.pick = null
+        const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
+        const code = f && String(f.properties.station ?? f.properties.code ?? '')
+        if (code && app.stations[code]) setPlanEnd(end, code)
+        else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        return
+      }
+      const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
       const v = vs.find((f) => !f.properties.dim) ?? vs[0]
       if (v) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
-      const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['route-stops', 'stops'] })[0]
-      if (s) return navigate({ kind: 'stop', id: String(s.properties.id) })
+      const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['plan-stops', 'route-stops', 'stops', 'stations', 'station-sel'] })[0]
+      if (s) {
+        const p = s.properties
+        // Platforms (route, plan and platform markers carry a stop id) open their station with that platform.
+        const stop = p.id ? String(p.id) : null
+        const code = p.code ? String(p.code) : stop ? app.stops[stop]?.station : null
+        if (code) return navigate({ kind: 'station', code, stop: p.code ? null : stop })
+      }
       const rl = m.queryRenderedFeatures(box(e.point, r), { layers: ['route-line'] })[0]
       if (rl && app.view.kind === 'line') return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
-      if (app.view.kind === 'vehicle' || app.view.kind === 'stop') closePanel()
+      if (app.view.kind === 'vehicle' || app.view.kind === 'station') closePanel()
     })
-    for (const layer of ['veh-body', 'route-stops', 'stops', 'route-line']) {
+    for (const layer of ['veh-body', 'veh-body-dim', 'route-stops', 'stops', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
       m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'))
       m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''))
     }
@@ -414,22 +695,88 @@
 
   // Filters, selection, the active line or feed state changed: redraw at the current frame.
   $effect(() => {
-    void [app.filters, app.view, activeLine, selectedDir, feedDown()]
+    void [app.filters, app.view, activeLine, selectedDir, planKeys, feedDown()]
     if (loaded) untrack(() => render(progress()))
   })
 
   $effect(() => {
     const stops = app.stops
+    const stations = app.stations
     if (!loaded || !map) return
     ;(map.getSource('stops') as GeoJSONSource).setData({
       type: 'FeatureCollection',
       features: Object.entries(stops).map(([id, s]) => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
-        properties: { id, name: s.platform ? `${s.name} (${s.platform})` : s.name },
+        properties: { id, station: s.station, plat: s.platform ?? '' },
+      })),
+    })
+    ;(map.getSource('stations') as GeoJSONSource).setData({
+      type: 'FeatureCollection',
+      features: Object.entries(stations).map(([code, s]) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
+        properties: { code, name: s.name },
       })),
     })
   })
+
+  // The open station: highlighted, and centred once when it opens.
+  let centredStation: string | null = null
+  $effect(() => {
+    const v = app.view
+    const station = v.kind === 'station' ? app.stations[v.code] : null
+    // With a platform picked, the ring marks the platform instead.
+    const plat = v.kind === 'station' && v.stop ? app.stops[v.stop] : null
+    const st = station && plat && plat.station === (v as { code: string }).code ? { ...plat, name: `${plat.name} ${plat.platform ?? ''}`.trim() } : station
+    if (!loaded || !map) return
+    const code = v.kind === 'station' ? v.code : null
+    ;(map.getSource('station-sel') as GeoJSONSource).setData({
+      type: 'FeatureCollection',
+      features: st ? [{ type: 'Feature', geometry: { type: 'Point', coordinates: [st.lon, st.lat] }, properties: { code, name: st.name } }] : [],
+    })
+    if (!st) {
+      centredStation = null
+      return
+    }
+    if (centredStation === code || !station) return
+    centredStation = code
+    untrack(() => requestAnimationFrame(() => centreOn(station.lon, station.lat, Math.max(map!.getZoom(), 16))))
+  })
+
+  // The planner: draw the option (or just the chosen ends), and fit the map when the option changes.
+  let fittedPlan: string | null = null
+  $effect(() => {
+    const o = planOpt
+    const v = app.view
+    void [app.stations, app.plan]
+    if (!loaded) return
+    untrack(() => {
+      updatePlan()
+      if (v.kind !== 'plan') {
+        fittedPlan = null
+        return
+      }
+      if (!o) {
+        // No connection found: still show both ends.
+        const q = planQuery(v.from, v.to, v.at)
+        const ends = [placeCoords(v.from), placeCoords(v.to)].filter((c) => c != null)
+        if (app.plan?.query === q && app.plan.data && ends.length === 2 && fittedPlan !== `${q}#none`) {
+          fittedPlan = `${q}#none`
+          requestAnimationFrame(() => fitCoords(ends))
+        }
+        return
+      }
+      // A refresh that keeps the same trips keeps the view; another option or query refits.
+      const key = `${planQuery(v.from, v.to, v.at)}#${v.opt ?? 0}#${o.legs.map((l) => (l.kind === 'ride' ? l.trip : 'w')).join()}`
+      if (fittedPlan === key) return
+      fittedPlan = key
+      // The trip's live vehicles are in view too, e.g. one still on its way to the boarding stop.
+      const mine = (app.live?.vehicles ?? []).filter((x) => planKeys?.has(x.key)).map((x): [number, number] => [x.lon, x.lat])
+      requestAnimationFrame(() => fitCoords([...o.legs.flatMap((l) => l.coords), ...mine]))
+    })
+  })
+
 
   let fitted: string | null = null
   $effect(() => {

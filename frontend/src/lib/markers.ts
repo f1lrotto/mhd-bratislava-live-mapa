@@ -98,3 +98,32 @@ export function shapeSvg(type: string, color: string, size = 16): string {
         : `<circle cx="8" cy="8" r="7" />`
   return `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="${color}" stroke="#fff" stroke-width="1.2" aria-hidden="true">${shape}</svg>`
 }
+
+/** The planner's destination pin (anchor at the bottom tip) and the picked-point pin. */
+export function addPinImages(map: MlMap): void {
+  for (const [id, color] of [['pin-to', '#d7263d'], ['pin-pick', '#146eff']] as const) {
+    const W = 30
+    const H = 40
+    const c = document.createElement('canvas')
+    c.width = W * RATIO
+    c.height = H * RATIO
+    const ctx = c.getContext('2d')!
+    ctx.scale(RATIO, RATIO)
+    ctx.beginPath()
+    ctx.moveTo(W / 2, H - 1.5)
+    ctx.bezierCurveTo(W / 2 - 3, H - 12, 2, H - 20, 2, 14)
+    ctx.arc(W / 2, 14, W / 2 - 2, Math.PI, 0)
+    ctx.bezierCurveTo(W - 2, H - 20, W / 2 + 3, H - 12, W / 2, H - 1.5)
+    ctx.closePath()
+    ctx.fillStyle = color
+    ctx.fill()
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#ffffff'
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(W / 2, 14, 5, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fill()
+    map.addImage(id, ctx.getImageData(0, 0, W * RATIO, H * RATIO), { pixelRatio: RATIO })
+  }
+}

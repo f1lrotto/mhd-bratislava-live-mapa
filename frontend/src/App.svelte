@@ -4,16 +4,18 @@
   import LinePanel from './components/LinePanel.svelte'
   import LinesPanel from './components/LinesPanel.svelte'
   import StatusPanel from './components/StatusPanel.svelte'
-  import StopPanel from './components/StopPanel.svelte'
+  import PlanPanel from './components/PlanPanel.svelte'
+  import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
   import { passes } from './lib/filter'
-  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters } from './lib/state.svelte'
+  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters, syncBack } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
   const initial = parseUrl()
   app.view = initial.view
   app.filters = initial.filters
+  syncBack()
 
   let staticError = $state<string | null>(null)
 
@@ -26,10 +28,14 @@
       const wasOpen = app.view.kind !== 'none'
       app.view = s.view
       app.filters = s.filters
+      syncBack()
       if (wasOpen && s.view.kind === 'none') (document.querySelector('.maplibregl-canvas') as HTMLElement | null)?.focus()
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && app.view.kind !== 'none') closePanel()
+      if (e.key !== 'Escape') return
+      // Esc first cancels picking a point on the map, then closes the panel.
+      if (app.pick) app.pick = null
+      else if (app.view.kind !== 'none') closePanel()
     }
     addEventListener('popstate', onPop)
     addEventListener('keydown', onKey)
@@ -80,10 +86,16 @@
   )
   const nFilters = $derived(filtersActive())
 
-  function toggle(kind: 'lines' | 'filters' | 'status') {
+  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan') {
     if (app.view.kind === kind) closePanel()
+    else if (kind === 'plan') navigate({ kind, from: null, to: null, at: null, opt: null })
     else navigate({ kind })
   }
+
+  // Picking a point belongs to the planner; leaving it cancels the pick.
+  $effect(() => {
+    if (app.view.kind !== 'plan') untrack(() => (app.pick = null))
+  })
 </script>
 
 <main class:has-panel={app.view.kind !== 'none'}>
@@ -99,6 +111,10 @@
       <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
     </div>
     <nav>
+      <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
+        <span>Trasa</span>
+      </button>
       <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
         <span>Linky</span>
@@ -128,7 +144,12 @@
     </div>
   {/if}
 
-  {#if app.view.kind === 'none' && app.live && !down}
+  {#if app.pick}
+    <div class="banner pick" role="status">
+      <span>Ťuknite na mapu alebo zastávku: <b>{app.pick === 'from' ? 'odkiaľ' : 'kam'}</b> idete.</span>
+      <button onclick={() => (app.pick = null)}>Zrušiť</button>
+    </div>
+  {:else if app.view.kind === 'none' && app.live && !down}
     {#if nFilters && !app.live.vehicles.some((v) => passes(v, app.filters))}
       <button class="hint-pill" onclick={() => setFilters({ types: [], lines: [], late: false })}
         >Filtre skryli všetky vozidlá · Zrušiť</button
@@ -143,8 +164,10 @@
       <LinePanel line={app.view.line} dir={app.view.dir} />
     {:else if app.view.kind === 'vehicle'}
       <VehiclePanel key={app.view.key} />
-    {:else if app.view.kind === 'stop'}
-      <StopPanel id={app.view.id} />
+    {:else if app.view.kind === 'station'}
+      <StationPanel code={app.view.code} stop={app.view.stop} />
+    {:else if app.view.kind === 'plan'}
+      <PlanPanel from={app.view.from} to={app.view.to} at={app.view.at} opt={app.view.opt} />
     {:else if app.view.kind === 'status'}
       <StatusPanel />
     {:else if app.view.kind === 'lines'}
@@ -289,6 +312,23 @@
     font-weight: 600;
     font-size: 0.9rem;
     box-shadow: var(--shadow-sm);
+  }
+  .banner.pick {
+    background: var(--text);
+    color: #fff;
+    border: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-weight: 500;
+  }
+  .banner.pick button {
+    flex: none;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.16);
+    font-weight: 700;
   }
   .hint-pill {
     position: absolute;
