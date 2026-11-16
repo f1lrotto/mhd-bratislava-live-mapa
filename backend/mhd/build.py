@@ -5,7 +5,9 @@
 It writes <data>/static/ and only rebuilds when the GTFS feed_version changes (or with --force):
 
     meta.json     feed version, build time, OSM timestamp, routing fallbacks per line
-    lines.json    every line: type, colours, directions (headsigns, stop ids, stop distances)
+    lines.json    every line: type, colours, directions (headsigns, stop ids, stop distances).
+                  Direction ids are DPB's direction_id ("0", "1"), plus "0-2", "1-3"… for the
+                  legs of loop lines and for branches that leave the main route
     shapes.json   {line: {direction: [[lon, lat], ...]}} street-following geometry
     stops.json    every stop: name, position, lines serving it
     service.json  calendar (weekday pattern, date range, exceptions) and first-stop departures
@@ -46,6 +48,10 @@ way(r.r);
 out body geom;"""
 USER_AGENT = "mhd-nazivo-build/0.1 (github.com/f1lrotto/mhd-bratislava-live-mapa)"
 
+MIN_SHARE = 0.15  # share of trips a pattern needs to become a direction (or branch) of its own
+BRANCH_OFF_M = 150.0  # a variant with a stop this far from the main shape is drawn as a branch
+MIN_LENGTH_M = 300.0  # directions shorter than this are stubs (depot pull-outs), not routes
+
 ROUTE_TYPES = {"0": "tram", "3": "bus", "11": "trolleybus", "800": "trolleybus"}
 
 
@@ -66,13 +72,17 @@ def fetch_overpass(client: httpx.Client) -> dict:
             r = client.post(OVERPASS_URL, data={"data": OVERPASS_QUERY}, timeout=240)
             if r.status_code == 200 and '"elements"' in r.text[:2000]:
                 data = r.json()
-                if len(data["elements"]) > 100:
+                # A "remark" means the query timed out or ran out of memory: the result is partial.
+                if "remark" in data:
+                    log.warning("overpass attempt %d: %s", attempt + 1, data["remark"])
+                elif len(data["elements"]) > 100:
                     return data
             log.warning("overpass attempt %d: HTTP %s", attempt + 1, r.status_code)
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, ValueError) as e:
             log.warning("overpass attempt %d: %s", attempt + 1, e)
-        time.sleep(delay)
-        delay *= 2
+        if attempt < 5:
+            time.sleep(delay)
+            delay *= 2
     raise RuntimeError("Overpass API unavailable")
 
 
@@ -116,78 +126,116 @@ def build(gtfs: dict, osm: dict) -> dict:
             continue
         groups[(r["route_short_name"], t["direction_id"] or "0")].append(t)
 
+    pattern = {tid: tuple(s for _, s in sorted(v)) for tid, v in seq.items()}
+    lonlat = {s: (float(v["stop_lon"]), float(v["stop_lat"])) for s, v in stops.items()}
     lines: dict[str, dict] = {}
     shapes: dict[str, dict[str, list]] = defaultdict(dict)
     departures: dict[str, dict[str, dict[str, list[int]]]] = defaultdict(lambda: defaultdict(dict))
     stop_lines: dict[str, set[str]] = defaultdict(set)
     fallbacks: dict[str, int] = {}
-    graphs: dict[tuple[str, str], osmroute.Graph] = {}
+    graphs: dict[tuple[str, str, bool], osmroute.Graph] = {}
+    line_dirs: dict[str, list[dict]] = defaultdict(list)
 
-    for (line, direction), trips in sorted(groups.items()):
+    def route(line: str, mode: str, main: tuple[str, ...]) -> tuple[list, list[float], int]:
+        pts = [lonlat[s] for s in main]
+        # Without a relation of its own in this direction, the line's relations for the other
+        # direction can be travelled backwards.
+        key = (line, mode, not osmroute.has_own_relation(osm["elements"], line, mode, pts))
+        if key not in graphs:
+            graphs[key] = osmroute.build_graph(osm["elements"], *key)
+        return osmroute.route_stops(graphs[key], pts)
+
+    # DPB's direction_id is not always a direction: on loop lines (57, 69) one id holds legs that
+    # run opposite ways and the other only depot stubs. So each id is split into clusters of stop
+    # patterns that run the same way; each cluster's most common pattern is its main pattern.
+    for (line, did), trips in sorted(groups.items()):
         r = routes[trips[0]["route_id"]]
         mode = ROUTE_TYPES.get(r["route_type"], "bus")
-        # The direction's main pattern is its most common stop sequence.
-        # Patterns that never leave one stop (line 27's loop has a "direction 1" made of such
-        # stubs) are not routes.
-        patterns = Counter(
-            p
-            for p in (tuple(s for _, s in sorted(seq[t["trip_id"]])) for t in trips)
-            if len(set(p)) >= 2
-        )
-        if not patterns:
-            continue
-        main = list(patterns.most_common(1)[0][0])
-        headsigns = Counter(t["trip_headsign"] for t in trips if t["trip_headsign"])
-        main_headsign = Counter(
-            t["trip_headsign"]
-            for t in trips
-            if tuple(s for _, s in sorted(seq[t["trip_id"]])) == tuple(main)
-        ).most_common(1)[0][0]
-
-        key = (line, mode)
-        if key not in graphs:
-            graphs[key] = osmroute.build_graph(osm["elements"], line, mode)
-        pts = [(float(stops[s]["stop_lon"]), float(stops[s]["stop_lat"])) for s in main]
-        coords, stop_dist, fb = osmroute.route_stops(graphs[key], pts)
-        fallbacks[line] = fallbacks.get(line, 0) + fb
-        shapes[line][direction] = [[round(x, 6), round(y, 6)] for x, y in coords]
-
-        # Every stop served in this direction gets a distance along the main pattern, so short
-        # turns and variants can be placed on the ribbon too.
-        poly = Polyline(coords)
         for t in trips:
             for _, s in seq[t["trip_id"]]:
                 stop_lines[s].add(line)
+        by_pat: dict[tuple[str, ...], list[dict]] = defaultdict(list)
         for t in trips:
-            if t["trip_id"] in first_dep:
-                departures[line][direction].setdefault(t["service_id"], []).append(
-                    first_dep[t["trip_id"]][1]
-                )
+            if len(set(pattern[t["trip_id"]])) >= 2:
+                by_pat[pattern[t["trip_id"]]].append(t)
+        pats = sorted(by_pat, key=lambda p: -len(by_pat[p]))
+        clusters: list[dict] = []
+        for p in pats:  # patterns common enough to be a direction, running unlike the ones so far
+            if (
+                len(set(p)) >= 3
+                and (not clusters or len(by_pat[p]) >= MIN_SHARE * len(trips))
+                and all(_order_score(c["pos"], p) <= 0 for c in clusters)
+            ):
+                clusters.append({"main": p, "pos": _positions(p), "pats": [p]})
+        for p in pats:  # the rest are variants of the cluster they run along, or dropped
+            best = max(clusters, key=lambda c: _order_score(c["pos"], p), default=None)
+            if best is not None and p not in best["pats"] and _order_score(best["pos"], p) > 0:
+                best["pats"].append(p)
 
-        info = lines.setdefault(
-            line,
-            {
-                "line": line,
-                "type": mode,
-                "color": "#" + (r["route_color"] or "888888"),
-                "textColor": "#" + (r["route_text_color"] or "FFFFFF"),
-                "directions": {},
-            },
-        )
-        info["directions"][direction] = {
-            "headsign": main_headsign,
-            "headsigns": sorted(headsigns),
-            "from": stops[main[0]]["stop_name"],
-            "stops": main,
-            "stopDist": [round(d) for d in stop_dist],
-            "length": round(poly.length),
-            # Median scheduled run time of the main pattern, used to turn distance gaps into time.
-            "duration": _median_duration(
-                [t for t in trips if tuple(s for _, s in sorted(seq[t["trip_id"]])) == tuple(main)],
-                first_dep,
-                last_arr,
-            ),
-        }
+        n = 0
+        for c in clusters:
+            coords, stop_dist, fb = route(line, mode, c["main"])
+            poly = Polyline(coords)
+            if poly.length < MIN_LENGTH_M:  # a stub, e.g. a depot pull-out
+                continue
+            out = [{"main": c["main"], "coords": coords, "stopDist": stop_dist, "fb": fb, "pats": c["pats"]}]
+            # A common variant with stops away from the main shape (line 4's Stn. Nové Mesto
+            # terminal) is drawn as a branch of its own. Other variants' stops are not placed.
+            ctrips = sum(len(by_pat[p]) for p in c["pats"])
+            for p in c["pats"][1:]:
+                if len(by_pat[p]) >= MIN_SHARE * ctrips and max(poly.project(*lonlat[s])[1] for s in p) > BRANCH_OFF_M:
+                    bc, bd, bfb = route(line, mode, p)
+                    out[0]["pats"] = [q for q in out[0]["pats"] if q != p]
+                    out.append({"main": p, "coords": bc, "stopDist": bd, "fb": bfb, "pats": [p]})
+            for d in out:
+                n += 1
+                d["id"] = did if n == 1 else f"{did}-{n}"
+                d["trips"] = [t for q in d["pats"] for t in by_pat[q]]
+                d["route"] = r
+                d["mode"] = mode
+                line_dirs[line].append(d)
+
+    for line, dirs in line_dirs.items():
+        # A headsign belongs to the direction with most of its trips, and also to any direction
+        # with at least half as many (ambiguous; matching then decides by position and heading).
+        # A direction always keeps its main headsign, so a branch's vehicles can match it.
+        counts = [Counter(t["trip_headsign"] for t in d["trips"] if t["trip_headsign"]) for d in dirs]
+        top = Counter()
+        for cnt in counts:
+            for h, k in cnt.items():
+                top[h] = max(top[h], k)
+        for d, cnt in zip(dirs, counts):
+            main, r = d["main"], d["route"]
+            did = d["id"]
+            fallbacks[line] = fallbacks.get(line, 0) + d["fb"]
+            shapes[line][did] = [[round(x, 6), round(y, 6)] for x, y in d["coords"]]
+            main_trips = [t for t in d["trips"] if pattern[t["trip_id"]] == main]
+            # Interval departures only from trips leaving the main origin: one stream of vehicles.
+            origin = stops[main[0]]["stop_name"]
+            for t in d["trips"]:
+                if t["trip_id"] in first_dep and stops[pattern[t["trip_id"]][0]]["stop_name"] == origin:
+                    departures[line][did].setdefault(t["service_id"], []).append(first_dep[t["trip_id"]][1])
+            info = lines.setdefault(
+                line,
+                {
+                    "line": line,
+                    "type": d["mode"],
+                    "color": "#" + (r["route_color"] or "888888"),
+                    "textColor": "#" + (r["route_text_color"] or "FFFFFF"),
+                    "directions": {},
+                },
+            )
+            headsign = Counter(t["trip_headsign"] for t in main_trips).most_common(1)[0][0]
+            info["directions"][did] = {
+                "headsign": headsign,
+                "headsigns": sorted(h for h, k in cnt.items() if 2 * k >= top[h] or h == headsign),
+                "from": origin,
+                "stops": list(main),
+                "stopDist": [round(x) for x in d["stopDist"]],
+                "length": round(Polyline(d["coords"]).length),
+                # Median scheduled run time of the main pattern, used to turn distance gaps into time.
+                "duration": _median_duration(main_trips, first_dep, last_arr),
+            }
 
     for line in departures:
         for direction in departures[line]:
@@ -238,6 +286,21 @@ def build(gtfs: dict, osm: dict) -> dict:
         "stops": out_stops,
         "service": {"calendar": calendar, "departures": departures},
     }
+
+
+def _positions(p: tuple[str, ...]) -> dict[str, int]:
+    """First index of each stop in a pattern."""
+    pos: dict[str, int] = {}
+    for i, s in enumerate(p):
+        pos.setdefault(s, i)
+    return pos
+
+
+def _order_score(pos: dict[str, int], p: tuple[str, ...]) -> int:
+    """Consecutive shared stops of `p` in the same order as `pos`, minus those in the opposite
+    order. Positive when p runs the same way as the pattern `pos` was made from."""
+    seen = [pos[s] for s in p if s in pos]
+    return sum((b > a) - (b < a) for a, b in zip(seen, seen[1:]))
 
 
 def _median_duration(trips: list[dict], first_dep: dict, last_arr: dict) -> int | None:

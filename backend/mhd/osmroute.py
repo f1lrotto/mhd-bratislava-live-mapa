@@ -5,9 +5,14 @@ of consecutive stops is routed over a directed graph built from OSM route relati
 
 * Ways in the relations of the same line and mode, in the direction the relation travels them,
   cost their length.
+* Where consecutive ways of the line's relation don't touch (a mapping hole) and are at most
+  150 m apart, a straight edge joins them.
+* If the line has no relation running this direction, its other relations' ways can also be
+  travelled backwards, where oneway tags allow, at 1.2× their length.
 * Ways in any relation of the same mode group (road: bus + trolleybus, rail: tram) cost 1.5× their
   length and respect oneway tags (with bus/psv exceptions). This bridges gaps in a line's relation.
-* If no path exists, the pair is joined by a straight segment and counted as a fallback.
+* If no path exists, or it is more than twice the straight distance plus 600 m, the pair is joined
+  by a straight segment and counted as a fallback.
 """
 
 from __future__ import annotations
@@ -22,6 +27,8 @@ from .geo import project_on_segment, to_lonlat, to_xy
 ROLE_ROUTE = {"", "forward", "backward", "route"}
 MODE_GROUP = {"bus": "road", "trolleybus": "road", "tram": "rail"}
 OTHER_LINE_FACTOR = 1.5
+REVERSE_OWN_FACTOR = 1.2
+GAP_MAX_M = 150.0  # bridge holes between consecutive relation members up to this long
 SNAP_RADIUS_M = 60.0
 SNAP_MAX_M = 200.0
 SNAP_PENALTY = 3.0  # cost per metre of distance between a stop and where it snaps
@@ -121,7 +128,17 @@ class Graph:
         return out[:12]
 
 
-def build_graph(osm_elements: list[dict], line: str, mode: str) -> Graph:
+def _route_members(rel: dict, ways: dict) -> list[tuple[dict, str]]:
+    return [
+        (ways[m["ref"]], m.get("role", ""))
+        for m in rel.get("members", [])
+        if m["type"] == "way" and m.get("role", "") in ROLE_ROUTE and m["ref"] in ways
+    ]
+
+
+def build_graph(osm_elements: list[dict], line: str, mode: str, reverse_own: bool = False) -> Graph:
+    """The routing graph for one line. With reverse_own, the line's own relations can also be
+    travelled backwards (for a direction that has no relation of its own)."""
     group = MODE_GROUP[mode]
     ways = {e["id"]: e for e in osm_elements if e["type"] == "way" and "geometry" in e}
     g = Graph()
@@ -136,26 +153,72 @@ def build_graph(osm_elements: list[dict], line: str, mode: str) -> Graph:
         if MODE_GROUP.get(rmode) != group:
             continue
         own = rmode == mode and rel["tags"].get("ref") == line
-        members = [
-            (ways[m["ref"]], m.get("role", ""))
-            for m in rel.get("members", [])
-            if m["type"] == "way" and m.get("role", "") in ROLE_ROUTE and m["ref"] in ways
-        ]
+        members = _route_members(rel, ways)
         dirs = relation_way_directions(members) if own else [None] * len(members)
+        exit_node: int | None = None
         for (w, _role), d in zip(members, dirs):
             nodes = [n for n in w["nodes"] if n in g.coords]
+            if not nodes:
+                exit_node = None
+                continue
             if d is None:  # another line's relation: obey the way's tags
                 d, factor = _oneway(w.get("tags", {})), OTHER_LINE_FACTOR
                 if group == "rail":
                     d = 0
             else:
                 factor = 1.0
+                # A hole in the relation: join the previous way's end to this way's start.
+                entry = nodes[0] if d == 1 else nodes[-1] if d == -1 else None
+                if exit_node is not None and entry is not None and nodes[0] != nodes[-1]:
+                    (ax, ay), (bx, by) = g.coords[exit_node], g.coords[entry]
+                    if math.hypot(bx - ax, by - ay) <= GAP_MAX_M:
+                        g.add_edge(exit_node, entry, 1.0)
+                        if reverse_own:
+                            g.add_edge(entry, exit_node, REVERSE_OWN_FACTOR)
+                exit_node = nodes[-1] if d == 1 else nodes[0] if d == -1 else None
+                if nodes[0] == nodes[-1]:
+                    exit_node = None
+                if reverse_own and d != 0 and _oneway(w.get("tags", {})) in (0, -d):
+                    for a, b in zip(nodes, nodes[1:]):
+                        if d == 1:
+                            g.add_edge(b, a, REVERSE_OWN_FACTOR)
+                        else:
+                            g.add_edge(a, b, REVERSE_OWN_FACTOR)
             for a, b in zip(nodes, nodes[1:]):
                 if d >= 0:
                     g.add_edge(a, b, factor)
                 if d <= 0:
                     g.add_edge(b, a, factor)
     return g
+
+
+def has_own_relation(
+    osm_elements: list[dict], line: str, mode: str, stops_lonlat: list[tuple[float, float]]
+) -> bool:
+    """Whether a relation of this line passes most of the stops, in their order."""
+    ways = {e["id"]: e for e in osm_elements if e["type"] == "way" and "geometry" in e}
+    xy = [to_xy(lon, lat) for lon, lat in stops_lonlat]
+    for rel in osm_elements:
+        tags = rel.get("tags", {})
+        if rel["type"] != "relation" or tags.get("route") != mode or tags.get("ref") != line:
+            continue
+        members = _route_members(rel, ways)
+        dirs = relation_way_directions(members)
+        pts: list[tuple[float, float]] = []
+        for (w, _role), d in zip(members, dirs):
+            geom = [to_xy(p["lon"], p["lat"]) for p in w["geometry"] if p]
+            pts.extend(reversed(geom) if d == -1 else geom)
+        if not pts:
+            continue
+        pos = []
+        for x, y in xy:
+            dist, i = min((math.hypot(px - x, py - y), i) for i, (px, py) in enumerate(pts))
+            if dist <= 100:
+                pos.append(i)
+        steps = [(b > a) - (b < a) for a, b in zip(pos, pos[1:])]
+        if len(pos) * 2 >= len(xy) and sum(steps) > 0:
+            return True
+    return False
 
 
 def route_between(
@@ -254,7 +317,7 @@ def route_stops(
     for p, q in zip(xy, xy[1:]):
         seg = route_between(g, p, q) if p != q else [p, q]
         straight = math.hypot(q[0] - p[0], q[1] - p[1])
-        if seg is None or _length(seg) > 4 * straight + 1500:
+        if seg is None or _length(seg) > 2 * straight + 600:
             seg = [p, q]
             fallbacks += 1
         extend(seg)
