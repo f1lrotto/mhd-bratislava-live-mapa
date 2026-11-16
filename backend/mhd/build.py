@@ -143,6 +143,7 @@ def build(gtfs: dict, osm: dict) -> dict:
     fallbacks: dict[str, int] = {}
     graphs: dict[tuple[str, str, bool], osmroute.Graph] = {}
     line_dirs: dict[str, list[dict]] = defaultdict(list)
+    trip_dir: dict[str, str] = {}
 
     def route(line: str, mode: str, main: tuple[str, ...]) -> tuple[list, list[float], int]:
         pts = [lonlat[s] for s in main]
@@ -238,6 +239,8 @@ def build(gtfs: dict, osm: dict) -> dict:
             shapes[line][did] = [[round(x, 6), round(y, 6)] for x, y in d["coords"]]
             if d["branches"]:
                 branches[line][did] = [[[round(x, 6), round(y, 6)] for x, y in b] for b in d["branches"]]
+            for t in d["trips"]:
+                trip_dir[t["trip_id"]] = did
             main_trips = [t for t in d["trips"] if pattern[t["trip_id"]] == main]
             origin = stops[main[0]]["stop_name"]
             # Interval departures at one reference stop: the main-pattern stop passed by most of the
@@ -277,6 +280,39 @@ def build(gtfs: dict, osm: dict) -> dict:
             for sid in departures[line][direction]:
                 departures[line][direction][sid].sort()
 
+    # Full timetable for departure boards, trip matching and journey planning. Trips are grouped
+    # by line, direction and stop pattern; `t` holds the time at each stop in seconds after the
+    # service day's midnight (can exceed 24 h). Arrival and departure are equal in this feed.
+    pat_index: dict[tuple, int] = {}
+    tt_patterns: list[dict] = []
+    tt_trips: list[dict] = []
+    for t in gtfs["trips"]:
+        tid = t["trip_id"]
+        r = routes.get(t["route_id"])
+        if r is None or tid not in seq or len(seq[tid]) < 2 or any(x is None for _, _, x in seq[tid]):
+            continue
+        line = r["route_short_name"]
+        key = (line, trip_dir.get(tid), pattern[tid])
+        if key not in pat_index:
+            pat_index[key] = len(tt_patterns)
+            tt_patterns.append({"line": line, "dir": key[1], "stops": list(pattern[tid])})
+        tt_trips.append(
+            {"id": tid, "p": pat_index[key], "svc": t["service_id"], "head": t["trip_headsign"], "t": [x for _, _, x in seq[tid]]}
+        )
+    # Stations: platforms sharing a stop_code (Hlavná stanica A, B, U ...).
+    stations: dict[str, dict] = {}
+    for s in gtfs["stops"]:
+        if s["stop_id"] not in stop_lines:
+            continue
+        st = stations.setdefault(s["stop_code"], {"name": s["stop_name"].strip(), "stops": [], "lines": set()})
+        st["stops"].append(s["stop_id"])
+        st["lines"] |= stop_lines[s["stop_id"]]
+    for st in stations.values():
+        pts = [(float(stops[x]["stop_lat"]), float(stops[x]["stop_lon"])) for x in st["stops"]]
+        st["lat"] = round(sum(p[0] for p in pts) / len(pts), 6)
+        st["lon"] = round(sum(p[1] for p in pts) / len(pts), 6)
+        st["lines"] = sorted(st["lines"], key=_line_sort_key)
+
     out_stops = {
         s["stop_id"]: {
             "name": s["stop_name"],
@@ -285,6 +321,7 @@ def build(gtfs: dict, osm: dict) -> dict:
             "lat": round(float(s["stop_lat"]), 6),
             "lon": round(float(s["stop_lon"]), 6),
             "lines": sorted(stop_lines[s["stop_id"]], key=_line_sort_key),
+            "station": s["stop_code"],
         }
         for s in gtfs["stops"]
         if s["stop_id"] in stop_lines
@@ -319,6 +356,8 @@ def build(gtfs: dict, osm: dict) -> dict:
         "lines": dict(sorted(lines.items(), key=lambda kv: _line_sort_key(kv[0]))),
         "shapes": shapes,
         "branches": branches,
+        "stations": stations,
+        "timetable": {"patterns": tt_patterns, "trips": tt_trips},
         "stops": out_stops,
         "service": {"calendar": calendar, "departures": departures},
     }
@@ -361,7 +400,7 @@ def _line_sort_key(line: str) -> tuple:
 def write(out: dict, static_dir: Path) -> None:
     static_dir.mkdir(parents=True, exist_ok=True)
     # meta.json last: the app reloads when it changes, so the other files must already be new.
-    for name in ("lines", "shapes", "branches", "stops", "service", "meta"):
+    for name in ("lines", "shapes", "branches", "stops", "service", "stations", "timetable", "meta"):
         tmp = static_dir / f".{name}.json.tmp"
         tmp.write_text(json.dumps(out[name], ensure_ascii=False, separators=(",", ":")))
         os.replace(tmp, static_dir / f"{name}.json")
