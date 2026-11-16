@@ -49,7 +49,7 @@
       const g = s.biggestGap
       parts.push(
         g.fromStop && g.fromStop !== g.afterStop
-          ? `medzera ≈${minutes(g.s)} medzi ${g.fromStop} a ${g.afterStop}`
+          ? `medzera ≈${minutes(g.s)} na úseku ${g.fromStop} – ${g.afterStop}`
           : `medzera ≈${minutes(g.s)} pri zastávke ${g.afterStop}`,
       )
     }

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pyarrow as pa
@@ -133,6 +133,30 @@ class PollLogger:
         if self._current_hour is not None and hour != self._current_hour:
             self.compact_finished(now=ts)
         self._current_hour = hour
+
+    def recent(self, since: datetime, now: datetime | None = None) -> list[tuple[datetime, list[Vehicle]]]:
+        """Logged vehicle polls from `since` until now, oldest first, for restoring state on restart."""
+        now = now or datetime.now(timezone.utc)
+        files: list[Path] = []
+        h = since.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+        while h <= now:
+            d, hour = _hour_dir(self.root, "vehicles", h)
+            files += sorted(d.glob(f"{hour}.parquet")) + sorted(d.glob(f"{hour}.part-*.parquet"))
+            h += timedelta(hours=1)
+        polls: dict[datetime, list[Vehicle]] = {}
+        for f in files:
+            try:
+                rows = pq.read_table(f).to_pylist()
+            except Exception:
+                log.exception("unreadable log file %s", f)
+                continue
+            for r in rows:
+                if r["ts"] < since:
+                    continue
+                polls.setdefault(r["ts"], []).append(
+                    Vehicle(r["key"], r["line"], r["dest"], r["type"], r["lat"], r["lon"], r["delay_s"], r["state"], r["azimuth"])
+                )
+        return sorted(polls.items())
 
     def compact_finished(self, now: datetime | None = None) -> None:
         """Merge part files of every hour before the current one into <hour>.parquet."""

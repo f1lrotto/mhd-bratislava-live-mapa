@@ -7,7 +7,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 import httpx
@@ -89,6 +89,13 @@ class Poller:
             moved_bearing=bearing,
         )
 
+    def restore(self, history: list[tuple[datetime, list[Vehicle]]]) -> None:
+        """Replay logged polls so a restart doesn't make every parked vehicle look as if it just
+        moved. Only movement state is kept; the snapshot itself waits for the first live poll."""
+        for ts, vehicles in history:
+            self.apply(vehicles, ts)
+        self.snapshot = Snapshot(moved_at=self.snapshot.moved_at, moved_bearing=self.snapshot.moved_bearing)
+
     async def poll_once(self, client: httpx.AsyncClient) -> None:
         ts = datetime.now(timezone.utc)
         t0 = time.monotonic()
@@ -117,6 +124,12 @@ class Poller:
 
     async def run(self) -> None:
         headers = {"User-Agent": "mhd-nazivo/0.1 (single server poller, every 30 s)"}
+        if self.logger is not None:
+            try:
+                since = datetime.now(timezone.utc) - timedelta(minutes=15)
+                self.restore(await asyncio.to_thread(self.logger.recent, since))
+            except Exception:
+                log.exception("could not restore movement state from the logs")
         async with httpx.AsyncClient(timeout=20, headers=headers) as client:
             next_at = time.monotonic()
             while True:

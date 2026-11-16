@@ -126,7 +126,8 @@
     const c = covered()
     const pad = isMobile() ? 24 : 48
     map.fitBounds(b, {
-      padding: { top: 72 + pad, bottom: c.bottom + pad, left: c.left + pad, right: pad },
+      // The right side clears the zoom and location buttons.
+      padding: { top: 72 + pad, bottom: c.bottom + pad, left: c.left + pad, right: 56 + pad },
       maxZoom: 15,
       duration: 700,
     })

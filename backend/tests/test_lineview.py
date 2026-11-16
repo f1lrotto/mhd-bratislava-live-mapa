@@ -170,3 +170,32 @@ def test_vehicle_on_a_branch_is_on_route_but_gets_no_gaps(tmp_path):
     assert br["onBranch"] and not br["offRoute"] and "gapAhead" not in br
     assert d0["summary"]["count"] == 1
     assert lineview.city_status(p.snapshot, derived, s, MON_1630)["vehicles"] == 2
+
+
+def test_no_flags_before_the_reference_stop(tmp_path):
+    s = _write_static(tmp_path)
+    # Timetable departures are timed at M (5 km): before it a branch hasn't joined yet.
+    s.directions["83"]["0"].ref_stop = 1
+    p = Poller(logger=None)
+    # a→b 500 m (bunched if judged) lies before M; c→d 500 m lies after it.
+    p.apply([_bus("a", 1000), _bus("b", 1500), _bus("c", 6000), _bus("d", 6500)], MON_1630)
+    view = lineview.line_view("83", p.snapshot, lineview.derive_poll(p.snapshot, s), s, MON_1630)
+    flags = {v["key"]: v.get("gapAhead", {}).get("flag") for v in view["directions"][0]["vehicles"]}
+    assert flags["a"] is None and flags["c"] == "bunched"
+
+
+def test_restart_restores_movement_from_logs(tmp_path):
+    from mhd.logger import PollLogger
+
+    lg = PollLogger(tmp_path)
+    parked = _bus("p", 5000)
+    for i in range(25):  # 12.5 min parked, logged every 30 s
+        lg.log_poll(MON_1630 + timedelta(seconds=30 * i), [parked], 10, None)
+    now = MON_1630 + timedelta(seconds=30 * 25)
+    p = Poller(lg)
+    p.restore(lg.recent(now - timedelta(minutes=15), now=now))
+    assert p.snapshot.polled_at is None  # the snapshot still waits for a live poll
+    p.apply([parked], now)
+    from mhd import derive
+
+    assert derive.vehicle_json(p.snapshot.vehicles[0], p.snapshot, now)["stale"] is True

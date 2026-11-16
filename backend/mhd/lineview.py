@@ -103,6 +103,9 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
             flag = None
             # Vehicles laying over at either terminus aren't running yet, so they don't count.
             in_service = behind["along"] > AT_START_M and ahead["along"] < dr.length - AT_START_M
+            # The interval is measured at the reference stop. Before it, branches and trips that
+            # start partway along haven't joined yet, so the spacing there isn't comparable.
+            in_service = in_service and behind["along"] >= dr.stop_dist[dr.ref_stop]
             if interval and secs is not None and in_service:
                 if secs > GAP_FACTOR * interval:
                     flag = "gap"

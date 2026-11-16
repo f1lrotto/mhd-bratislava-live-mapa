@@ -102,10 +102,10 @@ export function buildUrl(view: View, filters: Filters): string {
   return qs ? `${path}?${qs}` : path
 }
 
-/** Change the view, recording it in the URL and browser history. */
 /** The control that opened the first panel (a nav button, or the map), for returning focus. */
 let opener: HTMLElement | null = null
 
+/** Change the view, recording it in the URL and browser history. */
 export function navigate(view: View, opts: { replace?: boolean } = {}): void {
   if (app.view.kind === 'none' && view.kind !== 'none') {
     const a = document.activeElement as HTMLElement | null

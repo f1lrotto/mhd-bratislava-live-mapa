@@ -23,8 +23,10 @@
     const tick = setInterval(() => (app.tick = Date.now()), 1000)
     const onPop = () => {
       const s = parseUrl()
+      const wasOpen = app.view.kind !== 'none'
       app.view = s.view
       app.filters = s.filters
+      if (wasOpen && s.view.kind === 'none') (document.querySelector('.maplibregl-canvas') as HTMLElement | null)?.focus()
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && app.view.kind !== 'none') closePanel()
