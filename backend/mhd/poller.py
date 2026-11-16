@@ -96,7 +96,7 @@ class Poller:
         error: str | None = None
         try:
             vehicles = await self._fetch(client)
-        except (feed.FeedError, httpx.HTTPError) as e:
+        except Exception as e:  # any failure, including a changed feed format, is a logged outage
             error = f"{type(e).__name__}: {e}"[:500]
         duration_ms = int((time.monotonic() - t0) * 1000)
 

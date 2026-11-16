@@ -4,6 +4,9 @@ Environment:
   MHD_DATA_DIR      where logs and the static build live (default: ../data next to backend/)
   MHD_NO_POLL=1     don't start the poller (tests, frontend work against a fixture)
   MHD_BASIC_AUTH    "user:password" to put everything behind HTTP basic auth while v1 is private
+
+Run a single worker (no `--workers N`): the poller and logger live in the process, and DPB
+must see one client.
 """
 
 from __future__ import annotations

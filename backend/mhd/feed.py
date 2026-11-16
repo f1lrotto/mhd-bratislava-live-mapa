@@ -74,7 +74,9 @@ def _clean(s: object) -> str | None:
 
 def parse_record(r: dict) -> Vehicle | None:
     key = _clean(r.get("Key"))
-    loc = r.get("Location") or {}
+    loc = r.get("Location")
+    if not isinstance(loc, dict):
+        return None
     lat, lon = loc.get("Latitude"), loc.get("Longitude")
     if key is None or lat is None or lon is None:
         return None

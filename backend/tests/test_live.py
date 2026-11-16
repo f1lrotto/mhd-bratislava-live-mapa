@@ -96,6 +96,33 @@ def test_logger_parts_and_compaction(tmp_path):
     assert (hour16 / "hour=17.parquet").exists()
 
 
+def test_compaction_after_crash_does_not_duplicate(tmp_path, monkeypatch):
+    lg = PollLogger(tmp_path)
+    lg.log_poll(T0, [_veh("1"), _veh("2")], 100, None)
+    lg.log_poll(T0 + timedelta(seconds=10), [_veh("1"), _veh("2")], 100, None)
+    # Crash after the hour file is replaced but before its parts are deleted.
+    monkeypatch.setattr(Path, "unlink", lambda self, missing_ok=False: (_ for _ in ()).throw(SystemExit))
+    with pytest.raises(SystemExit):
+        lg.log_poll(T0 + timedelta(seconds=40), [_veh("1")], 100, None)
+    monkeypatch.undo()
+    PollLogger(tmp_path)  # restart compacts the leftover parts again
+    t = pq.read_table(tmp_path / "vehicles" / "date=2026-11-16" / "hour=16.parquet")
+    assert t.num_rows == 4
+
+
+def test_unexpected_feed_error_is_logged(tmp_path):
+    import asyncio
+
+    async def bad_fetch(_client):
+        return feed.parse_feed([{"Key": "1", "Location": [48.1, 17.1]}, {"Key": "2", "Location": "x"}])
+
+    p = Poller(PollLogger(tmp_path), fetch=bad_fetch)
+    asyncio.run(p.poll_once(None))
+    assert p.snapshot.error and p.snapshot.attempted_at is not None
+    polls = pq.ParquetDataset(tmp_path / "polls").read().to_pylist()
+    assert [r["ok"] for r in polls] == [False]
+
+
 def test_api_live_feed_down():
     from fastapi.testclient import TestClient
 

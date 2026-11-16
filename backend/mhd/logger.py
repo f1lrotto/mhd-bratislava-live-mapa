@@ -54,6 +54,22 @@ def _hour_dir(root: Path, dataset: str, ts: datetime) -> tuple[Path, str]:
     return root / dataset / f"date={ts:%Y-%m-%d}", f"hour={ts:%H}"
 
 
+def _fsync_dir(d: Path) -> None:
+    fd = os.open(d, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _atomic_write(table: pa.Table, target: Path, **kw) -> None:
+    tmp = target.with_name(f".{target.name}.tmp")
+    pq.write_table(table, tmp, **kw)
+    with open(tmp, "rb") as f:
+        os.fsync(f.fileno())
+    os.replace(tmp, target)
+
+
 class PollLogger:
     def __init__(self, root: str | Path):
         self.root = Path(root)
@@ -65,9 +81,7 @@ class PollLogger:
         d, hour = _hour_dir(self.root, dataset, ts)
         d.mkdir(parents=True, exist_ok=True)
         name = f"{hour}.part-{int(ts.timestamp() * 1000)}.parquet"
-        tmp = d / f".{name}.tmp"
-        pq.write_table(table, tmp)
-        os.replace(tmp, d / name)
+        _atomic_write(table, d / name)
 
     def log_poll(
         self,
@@ -76,8 +90,9 @@ class PollLogger:
         duration_ms: int,
         error: str | None,
     ) -> None:
-        try:
-            if vehicles:
+        # The poll row is written on its own so a bad vehicle table never hides the poll.
+        if vehicles:
+            try:
                 n = len(vehicles)
                 table = pa.table(
                     {
@@ -95,6 +110,10 @@ class PollLogger:
                     schema=VEHICLE_SCHEMA,
                 )
                 self._write_part("vehicles", table, ts)
+            except Exception:  # logging must never stop the poller
+                log.exception("failed to write vehicle log")
+                error = error or "vehicle log write failed"
+        try:
             poll = pa.table(
                 {
                     "ts": [ts],
@@ -106,7 +125,7 @@ class PollLogger:
                 schema=POLL_SCHEMA,
             )
             self._write_part("polls", poll, ts)
-        except Exception:  # logging must never stop the poller
+        except Exception:
             log.exception("failed to write poll log")
             return
 
@@ -139,11 +158,14 @@ class PollLogger:
     def _compact(d: Path, hour: str, parts: list[Path]) -> None:
         target = d / f"{hour}.parquet"
         tables = [pq.read_table(p) for p in parts]
-        if target.exists():  # a part written after an earlier compaction (e.g. clock skew)
-            tables.insert(0, pq.read_table(target))
+        if target.exists():
+            # Parts left over from a crash between replace and unlink are already in the target;
+            # each part holds one poll, so skip parts whose ts the target already has.
+            old = pq.read_table(target)
+            seen = set(old.column("ts").to_pylist())
+            tables = [old] + [t for t in tables if t.num_rows and t.column("ts")[0].as_py() not in seen]
         merged = pa.concat_tables(tables).sort_by("ts")
-        tmp = d / f".{hour}.compact.tmp"
-        pq.write_table(merged, tmp, compression="zstd")
-        os.replace(tmp, target)
+        _atomic_write(merged, target, compression="zstd")
+        _fsync_dir(d)  # the new hour file must be durable before its parts go
         for p in parts:
             p.unlink(missing_ok=True)
