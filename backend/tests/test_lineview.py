@@ -115,11 +115,12 @@ def test_city_status_worst_lines_need_three_vehicles(tmp_path):
     s = _write_static(tmp_path)
     p = Poller(logger=None)
     lone = Vehicle("x", "39", "Y", "bus", 48.15, 17.1, 900, 2, None)
-    p.apply([_bus("a", 100, 0), _bus("b", 200, 240), _bus("c", 300, 600), lone], MON_1630)
+    p.apply([_bus("a", 1000, 0), _bus("b", 2000, 240), _bus("c", 3000, 600), lone], MON_1630)
     st = lineview.city_status(p.snapshot, lineview.derive_poll(p.snapshot, s), s, MON_1630)
     assert [w["line"] for w in st["worst"]] == ["83"]
     assert st["worst"][0]["medianDelay"] == 240
-    assert st["shareLate"] == 0.75
+    # Line 39 isn't in the static build, so its service is unknown and its delay doesn't count.
+    assert st["shareLate"] == 0.667
 
 
 def test_parked_vehicles_get_no_flags_and_leave_city_status(tmp_path):

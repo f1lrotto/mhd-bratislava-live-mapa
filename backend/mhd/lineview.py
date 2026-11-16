@@ -7,14 +7,15 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from . import realtime
 from .derive import LATE_S, is_stale
 from .feed import Vehicle
 from .poller import Snapshot
+from .realtime import OFF_ROUTE_M, Realtime
 from .static import Static
 
 GAP_FACTOR = 1.5
 BUNCH_FACTOR = 0.3
-OFF_ROUTE_M = 300  # further than this from its direction's route: shown on the map, not the ribbon
 AT_START_M = 250  # vehicles this close to the first stop are laying over, not yet running
 WORST_MIN_VEHICLES = 3
 
@@ -38,19 +39,28 @@ class Derived:
 
     polled_at: datetime | None = None
     matches: dict[str, Match] = field(default_factory=dict)  # vehicle key -> match
+    # Trip assignments and service states (realtime.SERVICES) of the poll
+    realtime: Realtime = field(default_factory=Realtime)
+
+    def service(self, key: str) -> str:
+        return self.realtime.service.get(key, "unknown")
 
 
-def derive_poll(snap: Snapshot, static: Static | None) -> Derived:
+def derive_poll(snap: Snapshot, static: Static | None, now: datetime | None = None) -> Derived:
     out = Derived(polled_at=snap.polled_at)
-    if static is None:
-        return out
+    if static is not None:
+        _match_directions(snap, static, out)
+    out.realtime = realtime.compute(snap, static, out.matches, now)
+    return out
+
+
+def _match_directions(snap: Snapshot, static: Static, out: Derived) -> None:
     for v in snap.vehicles:
         az = v.azimuth if v.azimuth is not None else snap.moved_bearing.get(v.key)
         m = static.match_direction(v.line, v.dest, v.lon, v.lat, az)
         if m is not None:
             dr, along, off, branch_off = m
             out.matches[v.key] = Match(dr.id, along, off, branch_off)
-    return out
 
 
 def _unmatched_reason(v: Vehicle, static: Static) -> str:
@@ -58,7 +68,7 @@ def _unmatched_reason(v: Vehicle, static: Static) -> str:
         return "unknown_line"
     if v.dest is None:
         return "no_destination"
-    if "depo" in v.dest.lower() or v.dest.lower().startswith("dp."):
+    if realtime.is_depot(v.dest):
         return "to_depot"
     return "unknown_direction"
 
@@ -86,6 +96,8 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                     "onBranch": m.on_branch,
                     "delay": v.delay_s,
                     "stale": is_stale(v, snap, now),
+                    "service": derived.service(v.key),
+                    "trip": derived.realtime.trip_id(v.key),
                     "dest": v.dest,
                     "type": v.type,
                     "lastStop": static.stop_before(dr, m.along),
@@ -93,10 +105,11 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
             )
         vehicles.sort(key=lambda x: x["along"])
         # Gap from each vehicle to the next one ahead of it on the route.
-        # Parked vehicles (depots beside the route, broken-down buses) aren't part of the service:
-        # they stay in the list but get no gaps and don't count in the summary. Neither do vehicles
-        # on a branch, whose position along the main route is only approximate.
-        running = [x for x in vehicles if not x["offRoute"] and not x["onBranch"] and not x["stale"]]
+        # Only running vehicles are part of the service: parked ones (depots beside the route,
+        # broken-down buses), vehicles laying over and those fitting no trip stay in the list but
+        # get no gaps and don't count in the summary. Neither do vehicles on a branch, whose
+        # position along the main route is only approximate.
+        running = [x for x in vehicles if x["service"] == "running" and not x["onBranch"]]
         for behind, ahead in zip(running, running[1:]):
             dist = ahead["along"] - behind["along"]
             secs = round(dist / speed) if speed else None
@@ -177,15 +190,12 @@ def _ahead_of(running: list[dict], x: dict) -> dict:
 
 
 def city_status(snap: Snapshot, derived: Derived, static: Static | None, now: datetime) -> dict:
-    """Vehicles in service: with a line, not parked (stale), and not far from their route."""
-
-    def running(v: Vehicle) -> bool:
-        m = derived.matches.get(v.key)
-        return v.line is not None and not is_stale(v, snap, now) and (m is None or m.off <= OFF_ROUTE_M or m.on_branch)
-
-    in_service = [v for v in snap.vehicles if running(v)]
+    """Vehicles in service (running a trip or laying over between trips). Delays count only for
+    running vehicles: a parked or depot-bound vehicle's reported delay means nothing."""
+    by_service = Counter(derived.service(v.key) for v in snap.vehicles)
+    in_service = [v for v in snap.vehicles if derived.service(v.key) in ("running", "layover")]
     by_type = Counter(v.type for v in in_service)
-    with_delay = [v for v in in_service if v.delay_s is not None]
+    with_delay = [v for v in in_service if derived.service(v.key) == "running" and v.delay_s is not None]
     late = [v for v in with_delay if v.delay_s >= LATE_S]
     per_line: dict[str, list[int]] = defaultdict(list)
     for v in with_delay:
@@ -207,6 +217,7 @@ def city_status(snap: Snapshot, derived: Derived, static: Static | None, now: da
     return {
         "vehicles": len(in_service),
         "byType": dict(by_type),
+        "byService": {s: by_service.get(s, 0) for s in realtime.SERVICES},
         "withDelay": len(with_delay),
         "shareLate": round(len(late) / len(with_delay), 3) if with_delay else None,
         "worst": worst,

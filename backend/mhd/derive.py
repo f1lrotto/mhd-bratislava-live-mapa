@@ -30,8 +30,11 @@ def is_stale(v: Vehicle, snap: Snapshot, now: datetime) -> bool:
     return v.line is not None and moved is not None and (now - moved).total_seconds() >= STALE_AFTER_S
 
 
-def vehicle_json(v: Vehicle, snap: Snapshot, now: datetime) -> dict:
+def vehicle_json(v: Vehicle, snap: Snapshot, now: datetime, service: str | None = None) -> dict:
+    """The vehicle's live record. With a service state (realtime.SERVICES), only a running
+    vehicle gets a delay band: the delay a parked or depot-bound vehicle reports means nothing."""
     moved = snap.moved_at.get(v.key)
+    band = delay_band(v.delay_s) if service in (None, "running") else None
     return {
         "key": v.key,
         "line": v.line,
@@ -42,7 +45,7 @@ def vehicle_json(v: Vehicle, snap: Snapshot, now: datetime) -> dict:
         "az": v.azimuth if v.azimuth is not None else snap.moved_bearing.get(v.key),
         "delay": v.delay_s,
         "delayCapped": v.delay_s is not None and v.delay_s >= DELAY_CAP_S,
-        "band": delay_band(v.delay_s),
+        "band": band,
         "movedAgo": int((now - moved).total_seconds()) if moved else None,
         "stale": is_stale(v, snap, now),
     }

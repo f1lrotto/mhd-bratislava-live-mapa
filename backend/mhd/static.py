@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import statistics
+from array import array
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -70,6 +71,21 @@ class Static:
                 for h in di["headsigns"]:
                     self.by_headsign.setdefault((line, h), []).append(d)
         self._active_cache: dict[date, set[str]] = {}
+        self._timetable: Timetable | None = None
+        self.stations: dict[str, dict] = {}
+        stations_path = static_dir / "stations.json"
+        if stations_path.exists():
+            self.stations = json.loads(stations_path.read_text())
+
+    @property
+    def timetable(self) -> Timetable | None:
+        """Every trip of the build, loaded on first use. None when the build has no timetable."""
+        if self._timetable is None:
+            path = self.dir / "timetable.json"
+            if not path.exists():
+                return None
+            self._timetable = Timetable(json.loads(path.read_text()), self)
+        return self._timetable
 
     @classmethod
     def load(cls, data_dir: Path) -> Static | None:
@@ -170,3 +186,74 @@ class Static:
 def _angle_diff(a: float, b: float) -> float:
     d = abs(a - b) % 360
     return 360 - d if d > 180 else d
+
+
+def day_start(day: date) -> datetime:
+    """Midnight of a service day as GTFS counts it (noon minus 12 h, which differs from the wall
+    clock's midnight only on DST change days)."""
+    return datetime.combine(day, time(12), TZ) - timedelta(hours=12)
+
+
+@dataclass
+class Pattern:
+    line: str
+    dir: str | None
+    stops: list[str]
+    dist: list[float] | None  # each stop's distance along the direction's main shape (non-decreasing)
+
+
+@dataclass(slots=True)
+class Trip:
+    id: str
+    pattern: int
+    svc: str
+    head: str
+    t: array  # seconds after service-day midnight at each stop of the pattern
+
+
+class Timetable:
+    """The trips of timetable.json, indexed by direction, pattern and stop."""
+
+    def __init__(self, raw: dict, static: Static):
+        self.patterns: list[Pattern] = []
+        for p in raw["patterns"]:
+            dr = static.directions.get(p["line"], {}).get(p["dir"]) if p["dir"] is not None else None
+            self.patterns.append(Pattern(p["line"], p["dir"], p["stops"], _pattern_dist(p["stops"], dr, static)))
+        self.trips: list[Trip] = [Trip(t["id"], t["p"], t["svc"], t["head"], array("i", t["t"])) for t in raw["trips"]]
+        self.by_id: dict[str, int] = {t.id: i for i, t in enumerate(self.trips)}
+        self.by_pattern: list[list[int]] = [[] for _ in self.patterns]
+        self.by_direction: dict[tuple[str, str], list[int]] = {}
+        for i, t in enumerate(self.trips):
+            self.by_pattern[t.pattern].append(i)
+            p = self.patterns[t.pattern]
+            if p.dir is not None:
+                self.by_direction.setdefault((p.line, p.dir), []).append(i)
+        # stop id -> (pattern, index in the pattern), every index but the last (an arrival)
+        self.by_stop: dict[str, list[tuple[int, int]]] = {}
+        for pi, p in enumerate(self.patterns):
+            for k, s in enumerate(p.stops[:-1]):
+                self.by_stop.setdefault(s, []).append((pi, k))
+
+
+def _pattern_dist(stops: list[str], dr: Direction | None, static: Static) -> list[float] | None:
+    """Distance of each stop along the direction's main shape: the direction's own stop distances
+    where the pattern shares its stops, otherwise the stop projected on the shape (branch stops
+    land on the nearest point of the main route, which is only approximate)."""
+    if dr is None:
+        return None
+    out: list[float] = []
+    j = 0
+    for s in stops:
+        k = next((k for k in range(j, len(dr.stops)) if dr.stops[k] == s), None)
+        if k is not None:
+            out.append(dr.stop_dist[k])
+            j = k + 1
+            continue
+        info = static.stops.get(s)
+        prev = out[-1] if out else 0.0
+        if info is None:
+            out.append(prev)
+            continue
+        along, _ = dr.shape.project(info["lon"], info["lat"], lo=prev)
+        out.append(max(prev, along))
+    return out

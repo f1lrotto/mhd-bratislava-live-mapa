@@ -16,11 +16,12 @@ import base64
 import logging
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from . import derive, lineview
 from .history import History
 from .logger import PollLogger
+from .planner import Planner
 from .poller import Poller
 from .static import Static
 
@@ -62,12 +64,6 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
                 logging.getLogger(__name__).exception("failed to load static build")
         return state["static"]
 
-    def on_update(snap) -> None:
-        state["derived"] = lineview.derive_poll(snap, current_static())
-
-    poller.on_update = on_update
-    if poller.snapshot.polled_at is not None:
-        on_update(poller.snapshot)
     history = History(DATA_DIR / "logs")
 
     @asynccontextmanager
@@ -79,6 +75,20 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
 
     app = FastAPI(title="MHD naživo", lifespan=lifespan)
     app.state.poller = poller
+    # The latest poll's trip matching (realtime.Realtime): trip_delays(), trip_vehicle(), …
+    app.state.realtime = state["derived"].realtime
+
+    def on_update(snap) -> None:
+        t0 = time.perf_counter()
+        state["derived"] = lineview.derive_poll(snap, current_static())
+        app.state.realtime = state["derived"].realtime
+        ms = (time.perf_counter() - t0) * 1000
+        if ms > 500:
+            logging.getLogger(__name__).warning("deriving the poll took %d ms", ms)
+
+    poller.on_update = on_update
+    if poller.snapshot.polled_at is not None:
+        on_update(poller.snapshot)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     auth = os.environ.get("MHD_BASIC_AUTH")
@@ -103,11 +113,105 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         now = datetime.now(timezone.utc)
         vehicles = []
         for v in snap.vehicles:
-            j = derive.vehicle_json(v, snap, now)
-            m = derived.matches.get(v.key)
-            j["dir"] = m.direction if m else None
-            vehicles.append(j)
+            vehicles.append(_vehicle(v, snap, derived, now))
         return JSONResponse({"feed": derive.feed_status(snap, now), "vehicles": vehicles}, headers=no_store)
+
+    @app.get("/api/station/{code}")
+    def station(code: str, stop: str | None = None):
+        static = current_static()
+        if static is None:
+            return JSONResponse({"error": "static data not built"}, status_code=503)
+        st = static.stations.get(code)
+        if st is None:
+            return JSONResponse({"error": f"unknown station {code}"}, status_code=404)
+        if stop is not None and stop not in st["stops"]:
+            return JSONResponse({"error": f"stop {stop} is not a platform of station {code}"}, status_code=404)
+        now = datetime.now(timezone.utc)
+        rt = state["derived"].realtime
+        platforms = [
+            {
+                "stopId": sid,
+                "platform": static.stops[sid].get("platform"),
+                "lat": static.stops[sid]["lat"],
+                "lon": static.stops[sid]["lon"],
+                "lines": static.stops[sid].get("lines", []),
+            }
+            for sid in st["stops"]
+            if sid in static.stops
+        ]
+        body = {
+            "code": code,
+            "name": st["name"],
+            "lat": st["lat"],
+            "lon": st["lon"],
+            "lines": st.get("lines", []),
+            "platforms": platforms,
+            "departures": rt.departures([stop] if stop else st["stops"], now),
+            "feed": derive.feed_status(poller.snapshot, now),
+        }
+        return JSONResponse(body, headers=no_store)
+
+    @app.get("/api/vehicle/{key}")
+    def vehicle(key: str):
+        snap = poller.snapshot
+        v = next((v for v in snap.vehicles if v.key == key), None)
+        if v is None:
+            return JSONResponse({"error": f"unknown vehicle {key}"}, status_code=404)
+        now = datetime.now(timezone.utc)
+        derived = state["derived"]
+        body = {
+            "vehicle": _vehicle(v, snap, derived, now),
+            "trip": derived.realtime.vehicle_trip(key, now),
+            "feed": derive.feed_status(snap, now),
+        }
+        return JSONResponse(body, headers=no_store)
+
+    planner: dict = {"mtime": None, "p": None}
+
+    def current_planner() -> Planner | None:
+        if current_static() is None:
+            return None
+        if planner["mtime"] != state["static_mtime"]:
+            planner["p"] = Planner(DATA_DIR / "static")
+            planner["mtime"] = state["static_mtime"]
+        return planner["p"]
+
+    def _place(value: str, name: str | None) -> dict:
+        """\"93\" is a station code, \"48.15,17.11\" a map point or the user's location."""
+        if "," in value:
+            lat, lon = (float(x) for x in value.split(",", 1))
+            return {"lat": lat, "lon": lon, "name": name or "Zvolené miesto"}
+        return {"station": value}
+
+    @app.get("/api/plan")
+    def plan(
+        origin: str = Query(alias="from"),
+        dest: str = Query(alias="to"),
+        at: str | None = None,
+        fromName: str | None = None,
+        toName: str | None = None,
+    ):
+        p = current_planner()
+        if p is None:
+            return JSONResponse({"error": "static data not built"}, status_code=503)
+        now = datetime.now(timezone.utc)
+        try:
+            depart = datetime.fromisoformat(at) if at else now
+            o, d = _place(origin, fromName), _place(dest, toName)
+        except ValueError:
+            return JSONResponse({"error": "bad from, to or at"}, status_code=400)
+        rt = state["derived"].realtime
+        live = depart - now < timedelta(hours=2)  # current delays only matter for trips leaving soon
+        try:
+            options = p.plan(o, d, depart, delays=rt.trip_delays() if live else None)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        vehicles = rt.trip_vehicle() if live else {}
+        for it in options:
+            for leg in it["legs"]:
+                if leg["kind"] == "ride":
+                    leg["vehicle"] = vehicles.get(leg["trip"])
+        return JSONResponse({"options": options, "live": live}, headers=no_store)
 
     @app.get("/api/line/{line}")
     def line(line: str):
@@ -156,6 +260,16 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             return FileResponse(root / "index.html", headers={"Cache-Control": "no-cache"})
 
     return app
+
+
+def _vehicle(v, snap, derived: lineview.Derived, now: datetime) -> dict:
+    service = derived.service(v.key)
+    j = derive.vehicle_json(v, snap, now, service)
+    m = derived.matches.get(v.key)
+    j["dir"] = m.direction if m else None
+    j["service"] = service
+    j["trip"] = derived.realtime.trip_id(v.key)
+    return j
 
 
 app = create_app()
