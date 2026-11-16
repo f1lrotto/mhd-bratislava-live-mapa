@@ -405,6 +405,14 @@ class Planner:
                 add(pl.xy[j])
                 j += 1
             add(self._at(pl, a1))
+        # The ride starts and ends at the platforms, so its line meets the walk legs even where a
+        # stop stands off the street route (up to 150 m).
+        if pts:
+            first, last = self.stop_ll[stops[bpos]], self.stop_ll[stops[apos]]
+            pts.insert(0, [round(first[0], 6), round(first[1], 6)])
+            add_ll(last)
+            if pts[0] == pts[1]:
+                pts.pop(0)
         return pts
 
     @staticmethod
