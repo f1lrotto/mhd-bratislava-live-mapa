@@ -1,7 +1,8 @@
 # MHD naživo
 
-Live map of the Bratislava DPB fleet. `backend/` is FastAPI (Python 3.13, uv): it polls DPB every
-15 s, logs to Parquet, plans trips and serves `frontend/dist`. `frontend/` is Svelte 5 + MapLibre.
+Live map of the Bratislava DPB fleet and the IDS BK regional buses. `backend/` is FastAPI (Python
+3.13, uv): it polls DPB every 15 s and sweeps the IDS BK map every 30 s (`mhd/idsbk.py`), logs to
+Parquet, plans trips (DPB only) and serves `frontend/dist`. `frontend/` is Svelte 5 + MapLibre.
 
 ## Checks
 
@@ -22,8 +23,9 @@ Production is https://mhd.filiphupka.com: Railway project `mhd-nazivo`
 - The service runs one replica in `us-east4`. Not Amsterdam: DPB drops connections from Railway's
   `europe-west4` IPs. Keep one replica and one uvicorn worker: DPB must see a single poller.
 - A volume is mounted at `/data` (`MHD_DATA_DIR`) with the logs, history and static build. The
-  server builds the static data itself on an empty volume and runs the nightly build and retention
-  at 03:30 local time (`mhd/nightly.py`), so nothing else is scheduled.
+  server runs the static build at startup (a no-op unless a feed changed; on an empty volume it
+  builds everything) and the nightly build and retention at 03:30 local time (`mhd/nightly.py`), so
+  nothing else is scheduled.
 - Each deploy restarts the server with a few seconds of downtime (a volume can't be shared by two
   deployments). Railway's healthcheck on `/` gates it.
 - DNS: `mhd` CNAME in the Cloudflare zone `filiphupka.com`, DNS only (not proxied), with a
