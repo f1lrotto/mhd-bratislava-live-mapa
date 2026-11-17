@@ -6,7 +6,7 @@
   import { onMount, untrack } from 'svelte'
   import { planQuery } from './lib/api'
   import { passes } from './lib/filter'
-  import { addMarkerImages, addPinImages } from './lib/markers'
+  import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
@@ -104,15 +104,17 @@
       // Laying over, going to the depot, parked: grey, smaller and fainter than vehicles in service.
       const idle = v.service != null && v.service !== 'running' && !sel && !mine && !dim
       const hi = (activeLine != null && !dim && !other && !idle) || mine
+      const type = v.regional ? 'regional' : v.type
       features.push({
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: p },
         properties: {
           key: v.key,
           line: v.line ?? '',
-          type: v.regional ? 'regional' : v.type,
+          type,
           c: (v.regional ? rDown : down) || v.stale || dim || idle ? 's' : v.band == null ? 'n' : String(v.band),
           az: v.az ?? -1,
+          ao: v.az == null ? 0 : arrowOffset(type, v.az),
           dim,
           other,
           hi,
@@ -614,6 +616,8 @@
       layout: {
         'icon-image': ['concat', 'arrow-', ['get', 'c']],
         'icon-rotate': ['get', 'az'],
+        // Pushes the arrow out past wider bodies; the offset turns with the arrow.
+        'icon-offset': ['interpolate', ['linear'], ['get', 'ao'], 0, ['literal', [0, 0]], 20, ['literal', [0, -20]]],
         'icon-rotation-alignment': 'map',
         'icon-size': VEH_SIZE,
         'icon-allow-overlap': true,

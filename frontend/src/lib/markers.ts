@@ -2,17 +2,19 @@ import type { Map as MlMap } from 'maplibre-gl'
 import { BAND_COLORS, NO_DATA_COLOR, STALE_COLOR } from './format'
 
 // Marker images, drawn once on canvases at device resolution:
-//   body-<type>-<colour key>   shape by vehicle type, fill by delay band, the line number is a text layer;
-//                              type "regional" is an IDS BK bus: a bus circle with a dark outer ring
-//   arrow-<colour key>         a pointer just outside the body, rotated to the heading
+//   body-<type>-<colour key>   a silhouette by vehicle type, fill by delay band; the line number is a
+//                              text layer. Tram: a long capsule. Trolleybus: a square with two poles.
+//                              Bus: a circle. Type "regional" is an IDS BK bus: a dark circle with a
+//                              ring in the delay colour.
+//   arrow-<colour key>         a pointer just outside a bus body, rotated to the heading; arrowOffset
+//                              pushes it out past the wider silhouettes
 // Colour keys: 0..3 delay bands, n = no data, s = stale.
 
 const RATIO = Math.min(3, Math.max(2, Math.ceil(globalThis.devicePixelRatio || 1)))
-const BODY = 32
 const ARROW = 50
 
 export const COLOR_KEYS = ['0', '1', '2', '3', 'n', 's'] as const
-const REGIONAL_RING = '#1d232b'
+const REGIONAL_FILL = '#1d232b'
 const COLORS: Record<string, string> = {
   '0': BAND_COLORS[0],
   '1': BAND_COLORS[1],
@@ -22,59 +24,98 @@ const COLORS: Record<string, string> = {
   s: STALE_COLOR,
 }
 
-function canvas(size: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
-  const c = document.createElement('canvas')
-  c.width = c.height = size * RATIO
-  const ctx = c.getContext('2d')!
-  ctx.scale(RATIO, RATIO)
-  return [c, ctx]
+type Rect = [x: number, y: number, w: number, h: number, r: number]
+type Shape = { w: number; h: number; body: Rect; poles?: [number, number][][] }
+
+// Every body is a rounded rectangle around the marker's centre (a circle has r = w / 2), drawn on
+// a w × h canvas centred on it.
+const BUS: Shape = { w: 32, h: 32, body: [-14.5, -14.5, 29, 29, 14.5] }
+const SHAPES: Record<string, Shape> = {
+  tram: { w: 46, h: 32, body: [-21, -11, 42, 22, 11] },
+  trolleybus: {
+    w: 32,
+    h: 46,
+    body: [-13.5, -11.5, 27, 25, 6],
+    poles: [
+      [[-6, -11], [-10, -20]],
+      [[3, -11], [-1, -20]],
+    ],
+  },
+  bus: BUS,
+  other: BUS,
+  regional: { w: 32, h: 32, body: [-12.5, -12.5, 25, 25, 12.5] },
+}
+const shapeOf = (type: string) => SHAPES[type] ?? BUS
+
+function rectPath([x, y, w, h, r]: Rect): string {
+  return (
+    `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}` +
+    `A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}` +
+    `A${r} ${r} 0 0 1 ${x + r} ${y}Z`
+  )
+}
+const polesPath = (s: Shape) => (s.poles ?? []).map(([[x1, y1], [x2, y2]]) => `M${x1} ${y1}L${x2} ${y2}`).join('')
+
+// How far a body reaches from its centre towards the heading, including its outline.
+function reach(s: Shape, az: number): number {
+  const a = (az * Math.PI) / 180
+  const dot = ([x, y]: [number, number]) => x * Math.sin(a) - y * Math.cos(a)
+  const [x, y, w, h, r] = s.body
+  const corners: [number, number][] = [[x + r, y + r], [x + w - r, y + r], [x + w - r, y + h - r], [x + r, y + h - r]]
+  const tips = (s.poles ?? []).map(([, tip]) => dot(tip) + 2)
+  return Math.max(Math.max(...corners.map(dot)) + r + 1, ...tips)
 }
 
-function shapePath(ctx: CanvasRenderingContext2D, type: string): void {
-  const c = BODY / 2
-  ctx.beginPath()
-  if (type === 'tram') {
-    // Octagon: the clipped corners read as "tram" next to round buses and square trolleybuses.
-    const r = 14.5
-    const k = 5.5
-    ctx.moveTo(c - r + k, c - r)
-    ctx.lineTo(c + r - k, c - r)
-    ctx.lineTo(c + r, c - r + k)
-    ctx.lineTo(c + r, c + r - k)
-    ctx.lineTo(c + r - k, c + r)
-    ctx.lineTo(c - r + k, c + r)
-    ctx.lineTo(c - r, c + r - k)
-    ctx.lineTo(c - r, c - r + k)
-    ctx.closePath()
-  } else if (type === 'trolleybus') {
-    ctx.roundRect(c - 13.5, c - 13.5, 27, 27, 6)
-  } else if (type === 'regional') {
-    ctx.arc(c, c, 13, 0, Math.PI * 2)
-  } else {
-    ctx.arc(c, c, 14.5, 0, Math.PI * 2)
-  }
+/** Pixels to push the heading arrow out, beyond where it sits around a bus. */
+export function arrowOffset(type: string, az: number): number {
+  return Math.max(0, reach(shapeOf(type), az) - reach(BUS, az))
+}
+
+function canvas(w: number, h: number): CanvasRenderingContext2D {
+  const c = document.createElement('canvas')
+  c.width = w * RATIO
+  c.height = h * RATIO
+  const ctx = c.getContext('2d')!
+  ctx.scale(RATIO, RATIO)
+  return ctx
 }
 
 function body(type: string, color: string): ImageData {
-  const [, ctx] = canvas(BODY)
-  shapePath(ctx, type)
-  ctx.fillStyle = color
-  ctx.fill()
-  ctx.lineWidth = 2
-  ctx.strokeStyle = '#ffffff'
-  ctx.stroke()
-  if (type === 'regional') {
-    ctx.beginPath()
-    ctx.arc(BODY / 2, BODY / 2, 14.9, 0, Math.PI * 2)
+  const s = shapeOf(type)
+  const ctx = canvas(s.w, s.h)
+  ctx.translate(s.w / 2, s.h / 2)
+  const outline = new Path2D(rectPath(s.body))
+  if (s.poles) {
+    const poles = new Path2D(polesPath(s))
+    ctx.lineCap = 'round'
+    ctx.lineWidth = 4.5
+    ctx.strokeStyle = '#ffffff'
+    ctx.stroke(poles)
     ctx.lineWidth = 2
-    ctx.strokeStyle = REGIONAL_RING
-    ctx.stroke()
+    ctx.strokeStyle = REGIONAL_FILL
+    ctx.stroke(poles)
   }
-  return ctx.getImageData(0, 0, BODY * RATIO, BODY * RATIO)
+  if (type === 'regional') {
+    ctx.lineWidth = 6.5
+    ctx.strokeStyle = '#ffffff'
+    ctx.stroke(outline)
+    ctx.fillStyle = REGIONAL_FILL
+    ctx.fill(outline)
+    ctx.lineWidth = 3.5
+    ctx.strokeStyle = color
+    ctx.stroke(outline)
+  } else {
+    ctx.fillStyle = color
+    ctx.fill(outline)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = '#ffffff'
+    ctx.stroke(outline)
+  }
+  return ctx.getImageData(0, 0, s.w * RATIO, s.h * RATIO)
 }
 
 function arrow(color: string): ImageData {
-  const [, ctx] = canvas(ARROW)
+  const ctx = canvas(ARROW, ARROW)
   const c = ARROW / 2
   ctx.beginPath()
   ctx.moveTo(c, 1.5)
@@ -91,25 +132,26 @@ function arrow(color: string): ImageData {
 
 export function addMarkerImages(map: MlMap): void {
   for (const key of COLOR_KEYS) {
-    for (const type of ['bus', 'trolleybus', 'tram', 'other', 'regional']) {
+    for (const type of Object.keys(SHAPES)) {
       map.addImage(`body-${type}-${key}`, body(type, COLORS[key]), { pixelRatio: RATIO })
     }
     map.addImage(`arrow-${key}`, arrow(COLORS[key]), { pixelRatio: RATIO })
   }
 }
 
-/** A small inline SVG of a marker shape, for the legend and lists. */
+/** A small inline SVG of a marker silhouette, for the legend and lists; size is a bus's width. */
 export function shapeSvg(type: string, color: string, size = 16): string {
-  const s = size
+  const s = shapeOf(type)
+  const k = size / BUS.w
+  const d = rectPath(s.body)
   const shape =
-    type === 'tram'
-      ? `<polygon points="5,1 11,1 15,5 15,11 11,15 5,15 1,11 1,5" />`
-      : type === 'trolleybus'
-        ? `<rect x="1.5" y="1.5" width="13" height="13" rx="3.5" />`
-        : type === 'regional'
-          ? `<circle cx="8" cy="8" r="5.6" /><circle cx="8" cy="8" r="7.1" fill="none" stroke="${REGIONAL_RING}" stroke-width="1.3" />`
-          : `<circle cx="8" cy="8" r="7" />`
-  return `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="${color}" stroke="#fff" stroke-width="1.2" aria-hidden="true">${shape}</svg>`
+    type === 'regional'
+      ? `<path d="${d}" fill="${REGIONAL_FILL}" stroke="${color}" stroke-width="4" />`
+      : `<path d="${d}" fill="${color}" stroke="#fff" stroke-width="2" />`
+  const poles = s.poles
+    ? `<path d="${polesPath(s)}" fill="none" stroke="${REGIONAL_FILL}" stroke-width="2.4" stroke-linecap="round" />`
+    : ''
+  return `<svg width="${s.w * k}" height="${s.h * k}" viewBox="${-s.w / 2} ${-s.h / 2} ${s.w} ${s.h}" aria-hidden="true">${poles}${shape}</svg>`
 }
 
 /** The planner's destination pin (anchor at the bottom tip) and the picked-point pin. */
