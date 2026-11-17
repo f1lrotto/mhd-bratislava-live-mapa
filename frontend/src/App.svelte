@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
   import FiltersPanel from './components/FiltersPanel.svelte'
+  import InstallPrompt from './components/InstallPrompt.svelte'
   import LinePanel from './components/LinePanel.svelte'
   import LinesPanel from './components/LinesPanel.svelte'
   import StatusPanel from './components/StatusPanel.svelte'
@@ -178,6 +179,8 @@
       <FiltersPanel />
     {/if}
   {/key}
+
+  <InstallPrompt />
 </main>
 
 <style>
