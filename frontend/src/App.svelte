@@ -36,8 +36,9 @@
     }
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
-      // Esc first cancels picking a point on the map, then closes the panel.
-      if (app.pick) app.pick = null
+      // Esc first closes the phone menu, cancels picking a point on the map, then closes the panel.
+      if (menuOpen) menuOpen = false
+      else if (app.pick) app.pick = null
       // In one planner option, Esc first returns to the list of options.
       else if (app.view.kind === 'plan' && app.view.opt != null) navigate({ ...app.view, opt: null }, { replace: true })
       else if (app.view.kind !== 'none') closePanel()
@@ -91,7 +92,11 @@
   )
   const nFilters = $derived(filtersActive())
 
+  // On phones the nav buttons sit in a menu behind a burger button.
+  let menuOpen = $state(false)
+
   function toggle(kind: 'lines' | 'filters' | 'status' | 'plan') {
+    menuOpen = false
     if (app.view.kind === kind) closePanel()
     else if (kind === 'plan') navigate({ kind, from: null, to: null, at: null, opt: null })
     else navigate({ kind })
@@ -107,7 +112,7 @@
   <MapView {activeLine} {selectedDir} />
 
   <header class="topbar">
-    <button class="brand" onclick={closePanel} aria-label="MHD naživo, zavrieť panel">
+    <button class="brand" onclick={() => ((menuOpen = false), closePanel())} aria-label="MHD naživo, zavrieť panel">
       <span class="logo" aria-hidden="true"></span>
       <span class="brand-text">MHD <b>naživo</b></span>
     </button>
@@ -115,7 +120,13 @@
       <span class="pulse" aria-hidden="true"></span>
       <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
     </div>
-    <nav>
+    <button class="burger" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="menu" aria-label="Menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d={menuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 7h16M4 12h16M4 17h16'} />
+      </svg>
+      {#if nFilters && !menuOpen}<span class="count" aria-label="{nFilters} aktívne filtre">{nFilters}</span>{/if}
+    </button>
+    <nav id="menu" class:open={menuOpen}>
       <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
         <span>Trasa</span>
@@ -135,6 +146,7 @@
       </button>
     </nav>
   </header>
+  {#if menuOpen}<div class="menu-backdrop" onpointerdown={() => (menuOpen = false)} aria-hidden="true"></div>{/if}
 
   {#if down || (app.fetchError && !app.live) || staticError}
     <div class="banner" role="alert">
@@ -196,7 +208,7 @@
   }
   .topbar {
     position: absolute;
-    z-index: 6;
+    z-index: 7;
     top: max(10px, env(safe-area-inset-top));
     left: 10px;
     right: 10px;
@@ -210,6 +222,7 @@
   }
   .brand,
   .fresh,
+  .burger,
   nav {
     background: var(--surface);
     box-shadow: var(--shadow-sm);
@@ -287,7 +300,7 @@
     background: var(--text);
     color: #fff;
   }
-  nav svg {
+  .topbar svg {
     width: 20px;
     height: 20px;
     fill: none;
@@ -295,6 +308,9 @@
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+  .burger {
+    display: none;
   }
   .count {
     min-width: 18px;
@@ -377,36 +393,45 @@
     .hide-sm {
       display: none;
     }
-    nav button {
-      padding: 0 10px;
+    .burger {
+      display: grid;
+      place-items: center;
+      position: relative;
+      margin-left: auto;
+      width: 46px;
     }
-  }
-  @media (max-width: 400px) {
-    nav button span:not(.count) {
-      display: none;
-    }
-    nav button {
-      min-width: 40px;
-      padding: 0 8px;
-      justify-content: center;
-    }
-    .fresh {
-      padding: 0 10px;
-      gap: 6px;
-      font-size: 0.8rem;
-    }
-  }
-  /* The narrowest phones keep only the freshness dot; its title and colour still tell the state. */
-  @media (max-width: 379.98px) {
-    .fresh-text {
+    .burger .count {
       position: absolute;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      clip: rect(0 0 0 0);
+      top: 3px;
+      right: 3px;
     }
-    .fresh {
-      padding: 0 14px;
+    /* The nav drops down from the burger, under the top bar's right edge. */
+    nav {
+      display: none;
+      position: absolute;
+      top: 54px;
+      right: 0;
+      height: auto;
+      min-width: 200px;
+      flex-direction: column;
+      padding: 6px;
+      box-shadow: var(--shadow);
+    }
+    nav.open {
+      display: flex;
+    }
+    nav button {
+      height: 46px;
+      font-size: 1rem;
+      gap: 12px;
+    }
+    nav button .count {
+      margin-left: auto;
+    }
+    .menu-backdrop {
+      position: absolute;
+      inset: 0;
+      z-index: 6;
     }
   }
 </style>
