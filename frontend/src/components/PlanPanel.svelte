@@ -102,14 +102,31 @@
     if (v !== atTime) setAt(fromLocalInput(`${atDate}T${v}`))
   }
 
+  // The open option's rides are kept in its history entry, so coming back to it (the back button
+  // after a fallback plan or a vehicle, which remounts or re-queries this panel) shows and tracks the
+  // same connection, not whatever now has its index.
+  type PlanHist = { prev?: string; sig?: string | null } | null
+  const histSig = () => (history.state as PlanHist)?.sig ?? null
+  function saveSig(sig: string | null) {
+    if (histSig() === sig) return
+    history.replaceState({ ...(history.state as object | null), sig }, '')
+  }
+  /** Focus to move once results are on screen: the first card after opening a fallback, the
+   * option's heading when returning to an option. */
+  let focusAfter: 'card' | 'sum' | null = null
+
   // Departing now: refresh every 30 s (SLOW_POLL_MS) while open. A fixed time is fetched once (and on return
   // from a vehicle only if the cached result is for another query or failed).
   $effect(() => {
     const q = query
+    untrack(() => {
+      selSig = opt != null ? histSig() : null
+      if (selSig) focusAfter = 'sum'
+    })
     if (!q) return
     if (at) {
       untrack(() => {
-        if (app.plan?.query !== q || app.plan.error) refreshPlan(q)
+        if (app.plan?.query !== q || app.plan.error) refreshPlan(q, selSig)
       })
       return
     }
@@ -127,15 +144,32 @@
     untrack(() => {
       const fresh = data !== seen
       seen = data
-      if (!data || o == null) {
-        if (o == null) selSig = null
+      if (o == null) {
+        selSig = null
+        saveSig(null)
         return
       }
+      if (!data) return
       if (fresh && selSig) {
         const i = data.options.findIndex((x) => rideSig(x) === selSig)
         if (i >= 0 && i !== o) return navigate({ kind: 'plan', from, to, at, opt: i }, { replace: true })
       }
       selSig = rideSig(data.options[Math.min(o, data.options.length - 1)])
+      saveSig(selSig)
+    })
+  })
+
+  $effect(() => {
+    // Results on screen (a cached plan that is refreshing counts: its option is already shown).
+    const ready = !!plan?.data
+    void opt
+    if (!ready || !focusAfter) return
+    const which = focusAfter
+    untrack(async () => {
+      focusAfter = null
+      await tick()
+      if (which === 'sum') sumEl?.focus()
+      else (document.querySelector('.panel .card') as HTMLElement | null)?.focus()
     })
   })
 
@@ -228,7 +262,9 @@
   function fbSummary(fb: FallbackOption, o: PlanOption): string {
     const d = laterMin(fb, o)
     const lines = fbRides(fb).map((l) => l.line).join(' › ') || 'pešo'
-    return `${lines} · ${hm(fb.depart)} → ${hm(fb.arrive)}${d > 0 ? ` (+${d} min)` : ''}`
+    // The time to be at the stop: the first ride's departure, not the start of a walk to it.
+    const leave = fbRides(fb)[0]?.start ?? fb.depart
+    return `${lines} · ${hm(leave)} → ${hm(fb.arrive)}${d > 0 ? ` (+${d} min)` : ''}`
   }
   const placeShort = (p: { name: string; platform: string | null }) => p.name + (p.platform ? ` (${p.platform})` : '')
   /** Where to board and change: "pešo z Kutlíkova (D) do Pajštúnska (E), 98 o 10:27, prestup Ekonom. univerzita 90". */
@@ -247,7 +283,10 @@
   function openFallback(fb: FallbackOption) {
     const p = fb.legs[0]?.from
     const code = p?.station ?? (p?.stop ? app.stops[p.stop]?.station : null)
-    if (code) navigate({ kind: 'plan', from: code, to, at: fb.depart, opt: null })
+    // The departure rounded down to the minute (Bratislava time), never later than the real one.
+    if (!code) return
+    focusAfter = 'card'
+    navigate({ kind: 'plan', from: code, to, at: fromLocalInput(toLocalInput(fb.depart)), opt: null })
   }
   function showRiskBox() {
     const box = document.querySelector('.panel .risk-box') as HTMLElement | null
@@ -357,7 +396,7 @@
       <div class="opt-tabs" role="group" aria-label="Možnosť">
         {#each options as o, i (i)}
           <button class:active={o === sel} aria-pressed={o === sel} onclick={() => select(i)}>
-            {hm(o.depart)}–{hm(o.arrive)}
+            {hm(o.depart)}–{hm(missedFb(o)?.arrive ?? o.arrive)}
           </button>
         {/each}
       </div>
@@ -366,8 +405,9 @@
       <h2 class="big" tabindex="-1" bind:this={sumEl}>
         {hm(sel.depart)} →
         {#if missedFb(sel)}
-          <s class="old-arr"><span class="sr">pôvodne </span>{hm(sel.arrive)}</s>
-          <span class="new-arr"><span class="sr">, teraz </span>{hm(missedFb(sel)!.arrive)}</span>
+          <s class="old-arr"><span class="sr">{'pôvodne '}</span>{hm(sel.arrive)}</s><span class="new-arr"
+            ><span class="sr">{', teraz '}</span>{hm(missedFb(sel)!.arrive)}</span
+          >
         {:else}{hm(sel.arrive)}{/if}
       </h2>
       <span class="muted">{durationText(durOf(sel))} · {rides(sel).length ? transfersText(sel.transfers) : 'len pešo'}{sel.walkM ? ` · ${sel.walkM} m pešo` : ''}</span>
@@ -413,7 +453,7 @@
           <li class="leg ride-leg" style:--c={l.color}>
             <span class="t">
               <strong class={isLate(l) ? lateTone(l.delay) : ''}>{hm(l.start)}</strong>
-              {#if isLate(l)}<s class="sched"><span class="sr">podľa cestovného poriadku </span>{hm(sched(l.start, l.delay))}</s>{/if}
+              {#if isLate(l)}<s class="sched"><span class="sr">{'podľa cestovného poriadku '}</span>{hm(sched(l.start, l.delay))}</s>{/if}
             </span>
             <span class="rail" aria-hidden="true"><span class="dot" class:ring={transfer} class:origin={i === 0}></span></span>
             <div class="leg-body">
@@ -486,7 +526,7 @@
             <li class="leg alight" style:--c={l.color}>
               <span class="t">
                 <strong class={isLate(l) ? lateTone(l.delay) : ''}>{hm(l.end)}</strong>
-                {#if isLate(l)}<s class="sched"><span class="sr">podľa cestovného poriadku </span>{hm(sched(l.end, l.delay))}</s>{/if}
+                {#if isLate(l)}<s class="sched"><span class="sr">{'podľa cestovného poriadku '}</span>{hm(sched(l.end, l.delay))}</s>{/if}
               </span>
               <span class="rail end" aria-hidden="true"><span class="dot" class:flag={i === sel.legs.length - 1} class:ring={i !== sel.legs.length - 1}></span></span>
               <div class="leg-body">
@@ -584,7 +624,7 @@
               <span class="card-top">
                 <strong class="times">
                   {hm(o.depart)} →
-                  {#if missedFb(o)}<s class="old-arr">{hm(o.arrive)}</s> <span class="new-arr">{hm(missedFb(o)!.arrive)}</span>
+                  {#if missedFb(o)}<s class="old-arr">{hm(o.arrive)}</s><span class="new-arr">{hm(missedFb(o)!.arrive)}</span>
                   {:else}{hm(o.arrive)}{/if}
                 </strong>
                 <span class="dur">{durationText(durOf(o))}</span>
@@ -926,6 +966,7 @@
     font-size: 0.85em;
   }
   .new-arr {
+    margin-left: 0.3em;
     color: var(--bad-text);
   }
   .nowrap {
