@@ -49,6 +49,10 @@
     <input type="checkbox" checked={f.late} onchange={(e) => setFilters({ late: e.currentTarget.checked })} />
     Len meškajúce 5+ min
   </label>
+  <label class="switch">
+    <input type="checkbox" checked={!f.parked} onchange={(e) => setFilters({ parked: !e.currentTarget.checked })} />
+    Skryť odstavené vozidlá
+  </label>
 
   <p class="count" class:empty={!shown && total}>
     {#if total && !shown}Filtrom nezodpovedá žiadne vozidlo.{:else}Zobrazených {shown} z {total} vozidiel.{/if}

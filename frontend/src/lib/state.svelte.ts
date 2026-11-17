@@ -21,6 +21,7 @@ export interface Filters {
   lines: string[] // empty = all
   late: boolean // 5+ min late only
   regional: boolean // IDS BK regional buses shown (they don't count as DPB's buses in `types`)
+  parked: boolean // parked vehicles shown (see `isParked`)
 }
 
 export const POLL_MS = 15_000
@@ -48,7 +49,7 @@ class AppState {
   /** The previous history entry is another panel of this app, so the panel shows a back button. */
   canBack = $state.raw(false)
   view = $state.raw<View>({ kind: 'none' })
-  filters = $state.raw<Filters>({ types: [], lines: [], late: false, regional: true })
+  filters = $state.raw<Filters>({ types: [], lines: [], late: false, regional: true, parked: true })
   /** The line whose view is wanted now; responses for other lines are dropped. */
   wantLine = $state.raw<string | null>(null)
   lineView = $state.raw<LineView | null>(null)
@@ -90,6 +91,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
       lines: list('linky'),
       late: q.get('meskanie') === '1',
       regional: q.get('regionalne') !== '0',
+      parked: q.get('odstavene') !== '0',
     },
   }
 }
@@ -133,6 +135,7 @@ export function buildUrl(view: View, filters: Filters): string {
   if (filters.lines.length) q.set('linky', filters.lines.join(','))
   if (filters.late) q.set('meskanie', '1')
   if (!filters.regional) q.set('regionalne', '0')
+  if (!filters.parked) q.set('odstavene', '0')
   const qs = q.toString().replaceAll('%2C', ',').replaceAll('%3A', ':')
   return qs ? `${path}?${qs}` : path
 }
@@ -207,8 +210,8 @@ export function regionalDown(): boolean {
   return f.down || (ageMs != null && ageMs > FEED_DOWN_MS)
 }
 
-export const NO_FILTERS: Filters = { types: [], lines: [], late: false, regional: true }
+export const NO_FILTERS: Filters = { types: [], lines: [], late: false, regional: true, parked: true }
 
 export function filtersActive(f: Filters = app.filters): number {
-  return (f.types.length ? 1 : 0) + (f.lines.length ? 1 : 0) + (f.late ? 1 : 0) + (f.regional ? 0 : 1)
+  return (f.types.length ? 1 : 0) + (f.lines.length ? 1 : 0) + (f.late ? 1 : 0) + (f.regional ? 0 : 1) + (f.parked ? 0 : 1)
 }
