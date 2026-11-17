@@ -1,20 +1,23 @@
 """Per-poll trip matching, service state and predicted departures.
 
-The feed has no trip ids, so each vehicle with a matched direction is assigned the timetable trip
-whose schedule at the vehicle's position best fits its reported delay. That gives every vehicle a
-service state (running, laying over, going to the depot, parked, unknown) and every assigned trip a
-prediction: scheduled times plus the vehicle's delay at the stops it hasn't passed yet.
+DPB's feed has no trip ids, so each vehicle with a matched direction is assigned the timetable trip
+whose schedule at the vehicle's position best fits its reported delay. A regional bus names its
+trip number, so it gets that trip (today's or yesterday's, whichever fits) and its reported delay.
+That gives every vehicle a service state (running, laying over, going to the depot, parked,
+unknown) and every assigned trip a prediction: scheduled times plus the vehicle's delay at the
+stops it hasn't passed yet.
 """
 
 from __future__ import annotations
 
+import math
 import time as _time
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from .derive import is_stale
-from .feed import DELAY_CAP_S, Vehicle
+from .feed import DELAY_CAP_S, Vehicle, capped
 from .poller import Snapshot
 from .static import TZ, Static, Timetable, day_start
 
@@ -66,6 +69,7 @@ class Assignment:
     delay: int  # used for predictions, seconds
     uncertain: bool  # the feed's delay was capped at 15 min, so the real delay may be larger
     waiting: bool  # at the first stop before its departure
+    seen: float | None = None  # Unix time the vehicle was at `along` (its source's poll)
 
 
 @dataclass
@@ -98,7 +102,7 @@ class Realtime:
         out = {}
         for key, a in self.assigned.items():
             v = self.vehicles[key]
-            if self.service.get(key) == "running" and v.delay_s is not None and v.delay_s < DELAY_CAP_S:
+            if self.service.get(key) == "running" and v.delay_s is not None and not capped(v):
                 out[self.timetable.trips[a.trip].id] = a.delay
         return out
 
@@ -256,7 +260,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
     """Assign vehicles to trips and give each its service state. `matches` is the per-poll
     direction match (vehicle key -> object with direction, along, off, on_branch)."""
     t0 = _time.perf_counter()
-    now = now or snap.polled_at or datetime.now(timezone.utc)
+    now = now or snap.updated_at or snap.polled_at or datetime.now(timezone.utc)
     rt = Realtime(static=static, now=now, vehicles={v.key: v for v in snap.vehicles})
     local_day = now.astimezone(TZ).date()
     rt.base = day_start(local_day)
@@ -305,32 +309,43 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
         now_ts = now.timestamp()
         prev = {k: (tid, t0) for k, (tid, t0, at) in snap.trips.items() if now_ts - at <= HELD_MAX_AGE_S}
         pairs = []
+        # Each vehicle is judged at the time its position is from: the other source may have
+        # polled since.
+        seen = {v.key: rt.now_s(snap.seen_at(v.key) or now) for v, _ in candidates}
         for v, m in candidates:
+            named = str(v.trip_no) if v.trip_no is not None else None
+            vnow = seen[v.key]
             for ti, off in trips_of(v.line, m.direction):
                 trip = tt.trips[ti]
+                if named is not None and trip.no != named:
+                    continue
                 dist = tt.patterns[trip.pattern].dist
-                if m.along < dist[0] - AT_END_M or m.along > dist[-1] + AT_END_M:
+                if named is None and (m.along < dist[0] - AT_END_M or m.along > dist[-1] + AT_END_M):
                     continue  # this trip starts later or ends earlier along the route
                 start = trip.t[0] + off
                 held = prev.get(v.key) == (trip.id, base_ts + off)
-                waiting = m.along <= dist[0] + AT_END_M and now_s < start
+                waiting = m.along <= dist[0] + AT_END_M and vnow < start
                 if waiting:
-                    cost, limit = start - now_s, WAIT_S
+                    cost, limit = start - vnow, WAIT_S
+                elif named is not None:
+                    # The feed says which trip it is; the fit only picks today's or yesterday's.
+                    sched = _interp(dist, trip.t, m.along) + off
+                    cost, limit = abs(sched - (vnow - (v.delay_s or 0))), math.inf
                 else:
                     sched = _interp(dist, trip.t, m.along) + off
                     d = v.delay_s
-                    if (d is None or d < DELAY_CAP_S) and now_s - sched < -EARLY_MAX_S:
+                    if not capped(v) and vnow - sched < -EARLY_MAX_S:
                         continue  # the vehicle would be running this trip far ahead of time
                     if d is None:
-                        cost, limit = abs(sched - now_s), MAX_COST_NO_DELAY_S
+                        cost, limit = abs(sched - vnow), MAX_COST_NO_DELAY_S
                         cost += NO_DELAY_PENALTY_S
-                    elif d >= DELAY_CAP_S:
-                        target = now_s - DELAY_CAP_S
+                    elif capped(v):
+                        target = vnow - DELAY_CAP_S
                         cost = sched - target if sched > target else (target - sched) * CAPPED_SLACK
-                        limit = MAX_COST_S if now_s - sched <= CAPPED_MAX_S else -1
+                        limit = MAX_COST_S if vnow - sched <= CAPPED_MAX_S else -1
                         cost += CAPPED_PENALTY_S
                     else:
-                        cost = abs(sched - (now_s - d))
+                        cost = abs(sched - (vnow - d))
                         limit = MAX_COST_S if held else NEW_TRIP_LATE_S
                 if cost <= limit:
                     if trip.head != v.dest:
@@ -348,6 +363,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 continue
             taken.add((ti, off))
             v, m = by_key[key]
+            vnow = seen[key]
             trip = tt.trips[ti]
             dist = tt.patterns[trip.pattern].dist
             sched = _interp(dist, trip.t, m.along) + off
@@ -355,13 +371,17 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
             if waiting:
                 delay, uncertain = 0, False
             elif d is None:
-                delay, uncertain = max(0, round(now_s - sched)), False
-            elif d >= DELAY_CAP_S:
-                delay, uncertain = max(DELAY_CAP_S, round(now_s - sched)), True
+                delay, uncertain = max(0, round(vnow - sched)), False
+            elif v.trip_no is not None:
+                # Regional: whole minutes and uncapped. Positions on a variant route are only
+                # projected onto the direction's main route, too rough to correct the delay with.
+                delay, uncertain = d, False
+            elif capped(v):
+                delay, uncertain = max(DELAY_CAP_S, round(vnow - sched)), True
             else:
                 # The feed's delay lags (and is never negative); when the position shows the
                 # vehicle clearly later than reported, predict from the position.
-                pos = round(now_s - sched)
+                pos = round(vnow - sched)
                 delay, uncertain = (pos if pos > d + POSITION_LATE_S else d), False
             rt.assigned[key] = Assignment(
                 trip=ti,
@@ -371,6 +391,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 delay=delay,
                 uncertain=uncertain,
                 waiting=waiting,
+                seen=rt.base.timestamp() + vnow,
             )
             rt.by_trip[trip.id] = key
 
@@ -384,7 +405,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
             rt.service[v.key] = "layover" if a.waiting or at_end else "running"
         elif at_end or m.along <= dr.stop_dist[0] + AT_END_M:
             rt.service[v.key] = "layover"
-        elif v.delay_s is not None and v.delay_s < DELAY_CAP_S and (tt is None or trips_of(v.line, m.direction)):
+        elif v.delay_s is not None and not capped(v) and (tt is None or trips_of(v.line, m.direction)):
             # Moving along its route but fitting no free trip, while its direction runs: mostly
             # the second of two bunched vehicles that fit the same trip. It runs, so it still
             # counts for gaps and bunching, just without a trip (or predictions). Without a

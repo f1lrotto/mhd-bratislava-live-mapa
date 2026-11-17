@@ -134,4 +134,78 @@ def test_api_live_feed_down():
     with TestClient(create_app(poller=p, start_polling=False)) as c:
         body = c.get("/api/live").json()
     assert body["feed"]["down"] is True
+    assert body["regionalFeed"]["down"] is True  # no IDS BK sweep yet
     assert body["vehicles"][0]["line"] == "83"
+
+
+def _record(vid, line, lat, lon, trip=1, delay=0, urban=False, train=False):
+    """A record of the IDS BK map's vehicles/nearby endpoint (fields we don't read left out)."""
+    return {"vehicleID": vid, "delayMinutes": delay, "latitude": lat, "longitude": lon,
+            "timeTableTrip": {"tripID": vid, "trip": trip, "destination": "Pezinok, aut. st.",
+                              "timeTableLine": {"line": line, "ezIsTrain": train, "ezIsUrban": urban}}}
+
+
+def test_regional_sweep_finds_every_bus_beyond_the_nearest_100():
+    """The endpoint answers with the 100 vehicles nearest a point. City vehicles crowd Bratislava,
+    so the sweep has to split its tiles until it has reached every regional bus in the area."""
+    import asyncio
+    import random
+
+    from mhd import idsbk
+    from mhd.poller import distance_m
+
+    rnd = random.Random(1)
+    lat0, lat1, lon0, lon1 = idsbk.AREA
+    world = [_record(i, "83", 48.15 + rnd.uniform(-0.03, 0.03), 17.11 + rnd.uniform(-0.05, 0.05), urban=True)
+             for i in range(400)]
+    world += [_record(1000 + i, str(500 + i), rnd.uniform(lat0, lat1), rnd.uniform(lon0, lon1), trip=i, delay=i)
+              for i in range(40)]
+    world += [_record(1100 + i, "520", 48.15 + rnd.uniform(-0.03, 0.03), 17.11 + rnd.uniform(-0.05, 0.05))
+              for i in range(5)]  # regional buses in the city, among the trams
+    world.append(_record(2000, "S50", 48.3, 17.3, train=True))
+    calls = []
+
+    async def fetch(_client, lat, lon):
+        calls.append((lat, lon))
+        return sorted(world, key=lambda r: distance_m(lat, lon, r["latitude"], r["longitude"]))[: idsbk.CAP]
+
+    async def no_sleep(_s):
+        pass
+
+    got = []
+    s = idsbk.Sweeper(None, lambda ts, vs, err: got.append((vs, err)), fetch=fetch, sleep=no_sleep)
+    asyncio.run(s.sweep_once(None))
+    vs, err = got[0]
+    assert err is None
+    want = [f"idsbk:{1000 + i}" for i in range(40)] + [f"idsbk:{1100 + i}" for i in range(5)]
+    assert sorted(v.key for v in vs) == sorted(want)
+    v = next(v for v in vs if v.key == "idsbk:1012")
+    assert (v.line, v.trip_no, v.delay_s, v.type) == ("512", 12, 720, "bus")
+    first = len(calls)
+    assert first <= idsbk.MAX_REQUESTS
+    # The next sweep starts from the tiles the first one ended with instead of splitting again.
+    asyncio.run(s.sweep_once(None))
+    assert len(got[1][0]) == 45 and len(calls) - first < first
+
+
+def test_regional_sweeps_merge_into_the_snapshot_and_a_failed_one_keeps_the_last():
+    p = Poller(logger=None)
+    reg = feed.Vehicle("idsbk:7", "512", "Pezinok", "bus", 48.3, 17.27, 1200, None, None, trip_no=12)
+    p.apply([_veh()], T0)
+    p.apply_regional(T0 + timedelta(seconds=10), [reg])
+    p.apply([_veh(lat=48.151)], T0 + timedelta(seconds=15))  # DPB polls again: the regional bus stays
+    assert [v.key for v in p.snapshot.vehicles] == ["1", "idsbk:7"]
+    assert p.snapshot.seen_at("1") == T0 + timedelta(seconds=15)
+    assert p.snapshot.seen_at("idsbk:7") == T0 + timedelta(seconds=10)
+
+    now = T0 + timedelta(minutes=4)
+    p.apply([_veh(lat=48.152)], now)
+    p.apply_regional(now, None, "SweepError: HTTP 503")
+    snap = p.snapshot
+    assert [v.key for v in snap.vehicles] == ["1", "idsbk:7"]
+    status = derive.feed_status(snap.regional, now)
+    assert status["down"] and status["error"] == "SweepError: HTTP 503"
+    assert not derive.feed_status(snap, now)["down"]
+    j = derive.vehicle_json(snap.vehicles[1], snap, now)
+    # 20 minutes is a regional bus's real delay, not DPB's "15 min or more".
+    assert j["regional"] and j["tripNo"] == 12 and not j["delayCapped"] and j["band"] == 3

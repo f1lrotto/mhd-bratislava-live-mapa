@@ -23,6 +23,15 @@ TYPE_CODES = {"A": "tram", "O": "trolleybus", "T": "bus"}
 # The feed never reports more than 15:00; that value means "15 min or more, or unknown".
 DELAY_CAP_S = 15 * 60
 
+# IDS BK regional buses (idsbk.py) share the vehicle list and the static build with DPB. Their
+# vehicle keys and their stop, station, trip, route and service ids start with this, so they
+# never clash with DPB's fleet numbers and ids.
+REGIONAL = "idsbk:"
+
+
+def is_regional(key: str) -> bool:
+    return key.startswith(REGIONAL)
+
 
 @dataclass(slots=True)
 class Vehicle:
@@ -35,6 +44,12 @@ class Vehicle:
     delay_s: int | None
     state: int | None
     azimuth: int | None
+    trip_no: int | None = None  # regional buses: the trip number their feed names (DPB's has none)
+
+
+def capped(v: Vehicle) -> bool:
+    """The delay is DPB's 15:00, meaning 15 min or more. Regional delays have no cap."""
+    return v.delay_s is not None and v.delay_s >= DELAY_CAP_S and not is_regional(v.key)
 
 
 class FeedError(Exception):

@@ -1,4 +1,8 @@
-"""Polls the DPB feed every 15 s, whatever the number of users, and keeps the latest snapshot."""
+"""Polls the DPB feed every 15 s, whatever the number of users, and keeps the latest snapshot.
+
+The snapshot also holds the regional buses of the latest IDS BK sweep (idsbk.Sweeper hands them
+to apply_regional), so both sources share one vehicle list, one movement record and one
+derivation; each keeps its own poll times and error."""
 
 from __future__ import annotations
 
@@ -41,11 +45,21 @@ def bearing_deg(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
 
 
 @dataclass
-class Snapshot:
-    vehicles: list[Vehicle] = field(default_factory=list)
+class SourceState:
     polled_at: datetime | None = None  # time of the last successful poll
     attempted_at: datetime | None = None
     error: str | None = None  # error of the last attempt, None if it succeeded
+
+
+@dataclass
+class Snapshot:
+    vehicles: list[Vehicle] = field(default_factory=list)  # DPB's, then the regional buses
+    # DPB's poll state (the same fields as SourceState, so derive.feed_status takes either)
+    polled_at: datetime | None = None
+    attempted_at: datetime | None = None
+    error: str | None = None
+    regional: SourceState = field(default_factory=SourceState)
+    updated_at: datetime | None = None  # the newest data of either source: the snapshot's time
     moved_at: dict[str, datetime] = field(default_factory=dict)  # last time each vehicle moved
     # Bearing of each vehicle's last move, for vehicles whose feed azimuth is unknown.
     moved_bearing: dict[str, int] = field(default_factory=dict)
@@ -53,6 +67,10 @@ class Snapshot:
     # vehicle keeps its trip from poll to poll instead of a neighbour taking it on a near tie:
     # (trip id, its service day's midnight as a Unix time, time of that poll as a Unix time).
     trips: dict[str, tuple[str, int, float]] = field(default_factory=dict)
+
+    def seen_at(self, key: str) -> datetime | None:
+        """When the vehicle's source last reported it: the time its position is from."""
+        return self.regional.polled_at if feed.is_regional(key) else self.polled_at
 
 
 class Poller:
@@ -67,9 +85,54 @@ class Poller:
         self._fetch = fetch
         self.snapshot = Snapshot()
         self._last_pos: dict[str, tuple[float, float]] = {}
+        self._dpb: list[Vehicle] = []  # the last successful poll's
+        self._regional: list[Vehicle] = []  # the last successful sweep's
 
     def apply(self, vehicles: list[Vehicle], ts: datetime) -> None:
-        """Update the snapshot with a successful poll."""
+        """Update the snapshot with a successful DPB poll."""
+        self._dpb = vehicles
+        self._track(ts)
+        self.snapshot = Snapshot(
+            vehicles=self._dpb + self._regional,
+            polled_at=ts,
+            attempted_at=ts,
+            error=None,
+            regional=self.snapshot.regional,
+            updated_at=ts,
+            moved_at=self.snapshot.moved_at,
+            moved_bearing=self.snapshot.moved_bearing,
+            trips=self.snapshot.trips,
+        )
+
+    def apply_regional(self, ts: datetime, vehicles: list[Vehicle] | None, error: str | None = None) -> None:
+        """Record an IDS BK sweep: its buses replace the last sweep's (None when it failed)."""
+        s = self.snapshot
+        s.regional = SourceState(polled_at=s.regional.polled_at if vehicles is None else ts, attempted_at=ts, error=error)
+        if vehicles is None:
+            return
+        self._regional = vehicles
+        self._track(ts)
+        self.snapshot = Snapshot(
+            vehicles=self._dpb + self._regional,
+            polled_at=s.polled_at,
+            attempted_at=s.attempted_at,
+            error=s.error,
+            regional=s.regional,
+            updated_at=ts,
+            moved_at=s.moved_at,
+            moved_bearing=s.moved_bearing,
+            trips=s.trips,
+        )
+        if self.on_update is not None:
+            try:
+                self.on_update(self.snapshot)
+            except Exception:
+                log.exception("on_update failed")
+
+    def _track(self, ts: datetime) -> None:
+        """Movement of every vehicle of both sources. A source's vehicles whose position didn't
+        change (the other source just polled) don't count as moving."""
+        vehicles = self._dpb + self._regional
         moved_at = self.snapshot.moved_at
         bearing = self.snapshot.moved_bearing
         for v in vehicles:
@@ -85,22 +148,15 @@ class Poller:
                 del moved_at[k]
                 bearing.pop(k, None)
                 self._last_pos.pop(k, None)
-        self.snapshot = Snapshot(
-            vehicles=vehicles,
-            polled_at=ts,
-            attempted_at=ts,
-            error=None,
-            moved_at=moved_at,
-            moved_bearing=bearing,
-            trips=self.snapshot.trips,
-        )
 
     def restore(self, history: list[tuple[datetime, list[Vehicle]]]) -> None:
-        """Replay logged polls so a restart doesn't make every parked vehicle look as if it just
+        """Replay logged DPB polls so a restart doesn't make every parked vehicle look as if it just
         moved. Only movement state is kept; the snapshot itself waits for the first live poll."""
         for ts, vehicles in history:
             self.apply(vehicles, ts)
-        self.snapshot = Snapshot(moved_at=self.snapshot.moved_at, moved_bearing=self.snapshot.moved_bearing)
+        self._dpb = []
+        s = self.snapshot
+        self.snapshot = Snapshot(vehicles=self._regional, regional=s.regional, moved_at=s.moved_at, moved_bearing=s.moved_bearing)
 
     async def poll_once(self, client: httpx.AsyncClient) -> None:
         ts = datetime.now(timezone.utc)

@@ -9,7 +9,7 @@ from datetime import datetime
 
 from . import realtime
 from .derive import LATE_S, is_stale
-from .feed import Vehicle
+from .feed import Vehicle, is_regional
 from .poller import Snapshot
 from .realtime import OFF_ROUTE_M, Realtime
 from .static import Static
@@ -57,7 +57,7 @@ def derive_poll(snap: Snapshot, static: Static | None, now: datetime | None = No
 def _match_directions(snap: Snapshot, static: Static, out: Derived) -> None:
     for v in snap.vehicles:
         az = v.azimuth if v.azimuth is not None else snap.moved_bearing.get(v.key)
-        m = static.match_direction(v.line, v.dest, v.lon, v.lat, az)
+        m = static.match_direction(v.line, v.dest, v.lon, v.lat, az, v.trip_no)
         if m is not None:
             dr, along, off, branch_off = m
             out.matches[v.key] = Match(dr.id, along, off, branch_off)
@@ -70,13 +70,15 @@ def _unmatched_reason(v: Vehicle, static: Static) -> str:
         return "no_destination"
     if realtime.is_depot(v.dest):
         return "to_depot"
-    return "unknown_direction"
+    return "unknown_trip" if v.trip_no is not None else "unknown_direction"
 
 
 def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: datetime) -> dict | None:
     info = static.lines.get(line)
     if info is None:
         return None
+    # Regional buses come every half hour or less, unevenly: gaps and bunching mean nothing there.
+    flag_gaps = not info.get("regional")
     on_line = [v for v in snap.vehicles if v.line == line]
     directions = []
     for d, dr in static.directions.get(line, {}).items():
@@ -100,6 +102,7 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
                     "trip": derived.realtime.trip_id(v.key),
                     "dest": v.dest,
                     "type": v.type,
+                    "tripNo": v.trip_no,
                     "lastStop": static.stop_before(dr, m.along),
                 }
             )
@@ -119,7 +122,7 @@ def line_view(line: str, snap: Snapshot, derived: Derived, static: Static, now: 
             # The interval is measured at the reference stop. Before it, branches and trips that
             # start partway along haven't joined yet, so the spacing there isn't comparable.
             in_service = in_service and behind["along"] >= dr.stop_dist[dr.ref_stop]
-            if interval and secs is not None and in_service:
+            if flag_gaps and interval and secs is not None and in_service:
                 if secs > GAP_FACTOR * interval:
                     flag = "gap"
                 elif secs < BUNCH_FACTOR * interval:
@@ -190,10 +193,12 @@ def _ahead_of(running: list[dict], x: dict) -> dict:
 
 
 def city_status(snap: Snapshot, derived: Derived, static: Static | None, now: datetime) -> dict:
-    """Vehicles in service (running a trip or laying over between trips). Delays count only for
-    running vehicles: a parked or depot-bound vehicle's reported delay means nothing."""
-    by_service = Counter(derived.service(v.key) for v in snap.vehicles)
-    in_service = [v for v in snap.vehicles if derived.service(v.key) in ("running", "layover")]
+    """DPB's vehicles in service (running a trip or laying over between trips). Delays count only
+    for running vehicles: a parked or depot-bound vehicle's reported delay means nothing. Regional
+    buses aren't part of the city's status."""
+    dpb = [v for v in snap.vehicles if not is_regional(v.key)]
+    by_service = Counter(derived.service(v.key) for v in dpb)
+    in_service = [v for v in dpb if derived.service(v.key) in ("running", "layover")]
     by_type = Counter(v.type for v in in_service)
     with_delay = [v for v in in_service if derived.service(v.key) == "running" and v.delay_s is not None]
     late = [v for v in with_delay if v.delay_s >= LATE_S]

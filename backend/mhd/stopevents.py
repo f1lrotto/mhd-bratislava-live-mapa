@@ -67,15 +67,16 @@ class StopEventTracker:
             p = self._passed.get(key)
             times = p[2] if p is not None and (p[0], p[1]) == (trip.id, start) else {}
             passed[key] = (trip.id, start, times)
+            seen = a.seen if a.seen is not None else now  # when the vehicle was at a.along
             prev = self._last.get(key)
-            if prev is not None and prev[2] == now:  # a failed poll re-derived the same snapshot
+            if prev is not None and prev[2] == seen:  # its source hasn't polled since (or failed)
                 last[key] = prev
                 continue
             same_trip = prev is not None and prev[0] == trip.id and prev[1] == start
             if same_trip:
                 # GPS jitter can move a vehicle back over a stop; never record a stop twice.
                 next_stop, arrived = max(next_stop, prev[4]), arrived or prev[5]
-            if same_trip and 0 < now - prev[2] <= MAX_GAP_S:
+            if same_trip and 0 < seen - prev[2] <= MAX_GAP_S:
                 _, _, t0, a0, k0, was_arrived = prev
                 events = [(k, dist[k] + PASSED_M) for k in range(k0, min(next_stop, end))]
                 if arrived and not was_arrived:
@@ -84,7 +85,7 @@ class StopEventTracker:
                     day = local_day - timedelta(days=1) if a.offset else local_day
                     for k, at in events:
                         sched = base + a.offset + trip.t[k]
-                        actual = _cross(t0, a0, now, a.along, at)
+                        actual = _cross(t0, a0, seen, a.along, at)
                         times[k] = actual
                         out.append(
                             {
@@ -102,7 +103,7 @@ class StopEventTracker:
                                 "final": k == end,
                             }
                         )
-            last[key] = (trip.id, start, now, a.along, next_stop, arrived)
+            last[key] = (trip.id, start, seen, a.along, next_stop, arrived)
         # A vehicle can drop out of the assignment for a poll or two; keep its state meanwhile.
         for key, prev in self._last.items():
             if key not in last and now - prev[2] <= MAX_GAP_S:

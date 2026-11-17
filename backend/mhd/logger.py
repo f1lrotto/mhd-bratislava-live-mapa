@@ -6,6 +6,8 @@ rolls over (and on startup), the part files of finished hours are compacted into
     <root>/vehicles/date=2026-11-16/hour=16.parquet   one row per vehicle per poll
     <root>/polls/date=2026-11-16/hour=16.parquet      one row per poll attempt, including failures
     <root>/stop_events/date=2026-11-16/hour=16.parquet   one row per trip per stop passed (stopevents)
+    <root>/regional_vehicles/…, <root>/regional_polls/…   the same for IDS BK sweeps (idsbk.py);
+                                                         a poll row also has the sweep's requests
 
 Partitions use UTC. The logger deletes nothing but part files after a successful compaction; old
 days are removed by the nightly retention job (retention.py).
@@ -68,7 +70,37 @@ STOP_EVENT_SCHEMA = pa.schema(
     ]
 )
 
-DATASETS = ("vehicles", "polls", "stop_events")
+SWEEP_SCHEMA = pa.schema(
+    [
+        ("ts", pa.timestamp("ms", tz="UTC")),
+        ("ok", pa.bool_()),
+        ("vehicles", pa.int32()),
+        ("requests", pa.int16()),
+        ("duration_ms", pa.int32()),
+        ("error", pa.string()),
+    ]
+)
+
+DATASETS = ("vehicles", "polls", "stop_events", "regional_vehicles", "regional_polls")
+
+
+def _vehicle_table(ts: datetime, vehicles: list[Vehicle]) -> pa.Table:
+    n = len(vehicles)
+    return pa.table(
+        {
+            "ts": [ts] * n,
+            "key": [v.key for v in vehicles],
+            "line": [v.line for v in vehicles],
+            "dest": [v.dest for v in vehicles],
+            "type": [v.type for v in vehicles],
+            "lat": [v.lat for v in vehicles],
+            "lon": [v.lon for v in vehicles],
+            "delay_s": [v.delay_s for v in vehicles],
+            "state": [v.state for v in vehicles],
+            "azimuth": [v.azimuth for v in vehicles],
+        },
+        schema=VEHICLE_SCHEMA,
+    )
 
 
 def _hour_dir(root: Path, dataset: str, ts: datetime) -> tuple[Path, str]:
@@ -115,23 +147,7 @@ class PollLogger:
         # The poll row is written on its own so a bad vehicle table never hides the poll.
         if vehicles:
             try:
-                n = len(vehicles)
-                table = pa.table(
-                    {
-                        "ts": [ts] * n,
-                        "key": [v.key for v in vehicles],
-                        "line": [v.line for v in vehicles],
-                        "dest": [v.dest for v in vehicles],
-                        "type": [v.type for v in vehicles],
-                        "lat": [v.lat for v in vehicles],
-                        "lon": [v.lon for v in vehicles],
-                        "delay_s": [v.delay_s for v in vehicles],
-                        "state": [v.state for v in vehicles],
-                        "azimuth": [v.azimuth for v in vehicles],
-                    },
-                    schema=VEHICLE_SCHEMA,
-                )
-                self._write_part("vehicles", table, ts)
+                self._write_part("vehicles", _vehicle_table(ts, vehicles), ts)
             except Exception:  # logging must never stop the poller
                 log.exception("failed to write vehicle log")
                 error = error or "vehicle log write failed"
@@ -155,6 +171,19 @@ class PollLogger:
         if self._current_hour is not None and hour != self._current_hour:
             self.compact_finished(now=ts)
         self._current_hour = hour
+
+    def log_sweep(
+        self, ts: datetime, vehicles: list[Vehicle] | None, requests: int, duration_ms: int, error: str | None
+    ) -> None:
+        """An IDS BK sweep. Hours are compacted with DPB's polls, which never stop."""
+        try:
+            if vehicles:
+                self._write_part("regional_vehicles", _vehicle_table(ts, vehicles), ts)
+            row = {"ts": [ts], "ok": [error is None], "vehicles": [len(vehicles or ())], "requests": [requests],
+                   "duration_ms": [duration_ms], "error": [error]}
+            self._write_part("regional_polls", pa.table(row, schema=SWEEP_SCHEMA), ts)
+        except Exception:  # logging must never stop the sweeps
+            log.exception("failed to write regional sweep log")
 
     def log_stop_events(self, ts: datetime, rows: list[dict]) -> None:
         if not rows:

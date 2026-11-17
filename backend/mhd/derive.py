@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .feed import DELAY_CAP_S, Vehicle
-from .poller import Snapshot
+from .feed import Vehicle, capped, is_regional
+from .poller import Snapshot, SourceState
 
 STALE_AFTER_S = 10 * 60
 FEED_DOWN_AFTER_S = 3 * 60
@@ -44,14 +44,17 @@ def vehicle_json(v: Vehicle, snap: Snapshot, now: datetime, service: str | None 
         "lon": v.lon,
         "az": v.azimuth if v.azimuth is not None else snap.moved_bearing.get(v.key),
         "delay": v.delay_s,
-        "delayCapped": v.delay_s is not None and v.delay_s >= DELAY_CAP_S,
+        "delayCapped": capped(v),
         "band": band,
         "movedAgo": int((now - moved).total_seconds()) if moved else None,
         "stale": is_stale(v, snap, now),
+        "regional": is_regional(v.key),
+        "tripNo": v.trip_no,
     }
 
 
-def feed_status(snap: Snapshot, now: datetime) -> dict:
+def feed_status(snap: Snapshot | SourceState, now: datetime) -> dict:
+    """A source's state: DPB's from the snapshot itself, IDS BK's from snap.regional."""
     age = (now - snap.polled_at).total_seconds() if snap.polled_at else None
     return {
         "now": now.isoformat(),

@@ -7,8 +7,9 @@ For each finished service day it writes
                                                     scheduled time: count, mean/median/p90/max
                                                     delay, number 5+ min late
 
-and then deletes the raw 15-second logs (vehicles, polls, stop_events) older than RAW_DAYS. Raw
-stop events of a UTC date are only deleted once every service day they can belong to is written.
+and then deletes the raw logs (logger.DATASETS: vehicles, polls, stop_events and IDS BK's
+regional_vehicles, regional_polls) older than RAW_DAYS. Raw stop events of a UTC date are only
+deleted once every service day they can belong to is written.
 Safe to run any number of times: written days are skipped.
 
     uv run python -m mhd.retention [--data-dir DIR]

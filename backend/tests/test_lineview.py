@@ -111,6 +111,20 @@ def test_line_view_orders_vehicles_and_flags_gaps_and_bunching(tmp_path):
     assert view["unmatched"] == [{"key": "depot", "dest": "Depo Petržalka", "reason": "to_depot"}]
 
 
+def test_regional_lines_get_no_gap_flags_and_stay_out_of_city_status(tmp_path):
+    s = _write_static(tmp_path)
+    s.lines["83"]["regional"] = True
+    p = Poller(logger=None)
+    # The spacing of the DPB test above: bunched, then a gap. A regional line's isn't flagged.
+    p.apply_regional(MON_1630, [_bus("idsbk:c", 9000), _bus("idsbk:a", 500), _bus("idsbk:b", 1000)])
+    derived = lineview.derive_poll(p.snapshot, s)
+    d0 = lineview.line_view("83", p.snapshot, derived, s, MON_1630)["directions"][0]
+    assert [v["key"] for v in d0["vehicles"]] == ["idsbk:a", "idsbk:b", "idsbk:c"]
+    assert [v["gapAhead"]["flag"] for v in d0["vehicles"][:2]] == [None, None]
+    assert d0["summary"]["gaps"] == 0 and d0["summary"]["bunched"] == 0
+    assert lineview.city_status(p.snapshot, derived, s, MON_1630)["vehicles"] == 0
+
+
 def test_city_status_worst_lines_need_three_vehicles(tmp_path):
     s = _write_static(tmp_path)
     p = Poller(logger=None)

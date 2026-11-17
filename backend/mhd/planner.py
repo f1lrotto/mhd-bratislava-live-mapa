@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .feed import is_regional
 from .geo import Polyline, to_lonlat, to_xy
 
 TZ = ZoneInfo("Europe/Bratislava")
@@ -109,10 +110,15 @@ class Planner:
         static_dir = Path(static_dir)
         load = lambda name: json.loads((static_dir / f"{name}.json").read_text())  # noqa: E731
         tt = load("timetable")
-        self.stops_raw: dict = load("stops")
-        self.stations: dict = load("stations")
-        self.calendar: dict = load("service")["calendar"]
         self.lines: dict = load("lines")
+        # DPB only for now: the regional lines' patterns, trips, stops and stations are left out.
+        keep = [i for i, pat in enumerate(tt["patterns"]) if not self.lines.get(pat["line"], {}).get("regional")]
+        renum = {old: new for new, old in enumerate(keep)}
+        tt["patterns"] = [tt["patterns"][i] for i in keep]
+        tt["trips"] = [{**t, "p": renum[t["p"]]} for t in tt["trips"] if t["p"] in renum]
+        self.stops_raw: dict = {k: v for k, v in load("stops").items() if not is_regional(k)}
+        self.stations: dict = {k: v for k, v in load("stations").items() if not is_regional(k)}
+        self.calendar: dict = load("service")["calendar"]
         self.shapes: dict = load("shapes")
         bpath = static_dir / "branches.json"
         self.branches: dict = json.loads(bpath.read_text()) if bpath.exists() else {}

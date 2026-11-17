@@ -1,11 +1,16 @@
-"""Static build: routes, stops and scheduled departures from the DPB GTFS, routed along OSM streets.
+"""Static build: routes, stops and scheduled departures from the DPB GTFS, routed along OSM streets,
+and from the IDS BK regional GTFS (idsbk.py), drawn along its own shapes.
 
     uv run python -m mhd.build [--force]
 
-It writes <data>/static/ and only rebuilds when the GTFS feed_version changes (or with --force):
+It writes <data>/static/ and only rebuilds when DPB's feed_version or the regional feed's content
+changes (or with --force). Regional lines, stops, stations and trips are in the same files, with
+ids prefixed by feed.REGIONAL:
 
-    meta.json     feed version, build time, OSM timestamp, routing fallbacks per line
-    lines.json    every line: type, colours, directions (headsigns, stop ids, stop distances).
+    meta.json     feed version, build time, OSM timestamp, routing fallbacks per line; under
+                  "regional" the regional feed's version, end date and fallbacks
+    lines.json    every line: type, colours, directions (headsigns, stop ids, stop distances);
+                  regional lines have "regional": true and their operator.
                   Direction ids are DPB's direction_id ("0", "1"), plus "0-2", "1-3"… for the
                   legs of loop lines and for branches that leave the main route to another
                   headsign. refStop is the index of the stop the departures are timed at
@@ -32,10 +37,11 @@ import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 import httpx
 
-from . import osmroute
+from . import idsbk, osmroute
 from .geo import Polyline
 
 log = logging.getLogger("mhd.build")
@@ -90,20 +96,22 @@ def fetch_overpass(client: httpx.Client) -> dict:
     raise RuntimeError("Overpass API unavailable")
 
 
-def load_gtfs(zip_bytes: bytes) -> dict:
+def load_gtfs(zip_bytes: bytes, extra: tuple[str, ...] = ()) -> dict:
+    """The GTFS tables the build uses (and `extra` ones, such as "shapes"). Optional files the
+    feed lacks (feed_info, calendar_dates) are empty."""
     z = zipfile.ZipFile(io.BytesIO(zip_bytes))
-    return {
-        "feed_info": _read_csv(z, "feed_info.txt"),
-        "routes": _read_csv(z, "routes.txt"),
-        "trips": _read_csv(z, "trips.txt"),
-        "stops": _read_csv(z, "stops.txt"),
-        "stop_times": _read_csv(z, "stop_times.txt"),
-        "calendar": _read_csv(z, "calendar.txt"),
-        "calendar_dates": _read_csv(z, "calendar_dates.txt"),
-    }
+    names = set(z.namelist())
+    tables = ("feed_info", "routes", "trips", "stops", "stop_times", "calendar", "calendar_dates") + extra
+    return {t: _read_csv(z, f"{t}.txt") if f"{t}.txt" in names else [] for t in tables}
 
 
-def build(gtfs: dict, osm: dict) -> dict:
+Router = Callable[[str, str, tuple[str, ...]], tuple[list, list[float], int]]
+
+
+def build(gtfs: dict, osm: dict | None, router: Router | None = None) -> dict:
+    """`router(line, mode, stops)` returns a pattern's geometry, each stop's distance along it and
+    the number of straight-line fallbacks. Without one, patterns are routed along the OSM route
+    relations in `osm`."""
     routes = {r["route_id"]: r for r in gtfs["routes"]}
     stops = {s["stop_id"]: s for s in gtfs["stops"]}
 
@@ -146,6 +154,8 @@ def build(gtfs: dict, osm: dict) -> dict:
     trip_dir: dict[str, str] = {}
 
     def route(line: str, mode: str, main: tuple[str, ...]) -> tuple[list, list[float], int]:
+        if router is not None:
+            return router(line, mode, main)
         pts = [lonlat[s] for s in main]
         # Without a relation of its own in this direction, the line's relations for the other
         # direction can be travelled backwards.
@@ -296,9 +306,10 @@ def build(gtfs: dict, osm: dict) -> dict:
         if key not in pat_index:
             pat_index[key] = len(tt_patterns)
             tt_patterns.append({"line": line, "dir": key[1], "stops": list(pattern[tid])})
-        tt_trips.append(
-            {"id": tid, "p": pat_index[key], "svc": t["service_id"], "head": t["trip_headsign"], "t": [x for _, _, x in seq[tid]]}
-        )
+        entry = {"id": tid, "p": pat_index[key], "svc": t["service_id"], "head": t["trip_headsign"], "t": [x for _, _, x in seq[tid]]}
+        if t.get("trip_short_name"):  # the trip number regional buses report (DPB's feed has none)
+            entry["no"] = t["trip_short_name"]
+        tt_trips.append(entry)
     # Stations: platforms sharing a stop_code (Hlavná stanica A, B, U ...).
     stations: dict[str, dict] = {}
     for s in gtfs["stops"]:
@@ -348,7 +359,7 @@ def build(gtfs: dict, osm: dict) -> dict:
         "feedVersion": feed_info.get("feed_version"),
         "feedEnd": feed_info.get("feed_end_date"),
         "builtAt": datetime.now(timezone.utc).isoformat(),
-        "osmTimestamp": osm.get("osm3s", {}).get("timestamp_osm_base"),
+        "osmTimestamp": (osm or {}).get("osm3s", {}).get("timestamp_osm_base"),
         "fallbacks": {k: v for k, v in fallbacks.items() if v},
     }
     return {
@@ -397,6 +408,46 @@ def _line_sort_key(line: str) -> tuple:
     return (2, 0, line)
 
 
+def build_regional(zip_bytes: bytes, out: dict) -> None:
+    """Build the IDS BK regional timetable and add it to the DPB build `out`. Its lines are marked
+    \"regional\"; its ids carry feed.REGIONAL, so nothing clashes with DPB's."""
+    gtfs, router, extra = idsbk.prepare(load_gtfs(zip_bytes, ("shapes", "agency")), set(out["lines"]))
+    reg = build(gtfs, None, router)
+    version = idsbk.gtfs_version(zip_bytes)
+    # Everything that can fail is done: `out` is either left alone or gets all of it.
+    for line, info in reg["lines"].items():
+        out["lines"][line] = {**info, "regional": True, **extra.get(line, {})}
+    for name in ("shapes", "branches", "stations", "stops"):
+        out[name].update(reg[name])
+    n = len(out["timetable"]["patterns"])
+    out["timetable"]["patterns"] += reg["timetable"]["patterns"]
+    out["timetable"]["trips"] += [{**t, "p": t["p"] + n} for t in reg["timetable"]["trips"]]
+    out["service"]["calendar"].update(reg["service"]["calendar"])
+    out["service"]["departures"].update(reg["service"]["departures"])
+    out["meta"]["regional"] = {
+        "version": version,
+        "feedEnd": max((c["end"] for c in reg["service"]["calendar"].values()), default=None),
+        "fallbacks": reg["meta"]["fallbacks"],
+    }
+
+
+def _regional_zip(client: httpx.Client, cache: Path) -> bytes | None:
+    """The regional GTFS, or the last good one when the download fails (None without one)."""
+    path = cache / "idsbk.zip"
+    try:
+        r = client.get(idsbk.GTFS_URL)
+        r.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+            missing = {"routes.txt", "trips.txt", "stops.txt", "stop_times.txt"} - set(z.namelist())
+        if missing:
+            raise ValueError(f"no {', '.join(sorted(missing))}")
+        path.write_bytes(r.content)
+        return r.content
+    except (httpx.HTTPError, zipfile.BadZipFile, ValueError) as e:
+        log.warning("regional GTFS download failed (%s); %s", e, "using the cached one" if path.exists() else "none cached")
+        return path.read_bytes() if path.exists() else None
+
+
 def write(out: dict, static_dir: Path) -> None:
     static_dir.mkdir(parents=True, exist_ok=True)
     # meta.json last: the app reloads when it changes, so the other files must already be new.
@@ -409,7 +460,7 @@ def write(out: dict, static_dir: Path) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--force", action="store_true", help="rebuild even if the GTFS version is unchanged")
+    ap.add_argument("--force", action="store_true", help="rebuild even if neither GTFS changed")
     ap.add_argument("--cached-osm", action="store_true", help="reuse cache/osm.json instead of Overpass")
     ap.add_argument("--data-dir", default=os.environ.get("MHD_DATA_DIR", Path(__file__).resolve().parents[2] / "data"))
     args = ap.parse_args()
@@ -423,14 +474,18 @@ def main() -> None:
         r.raise_for_status()
         gtfs = load_gtfs(r.content)
         version = (gtfs["feed_info"] or [{}])[0].get("feed_version")
+        log.info("downloading the regional GTFS")
+        regional = _regional_zip(client, cache)
+        reg_version = idsbk.gtfs_version(regional) if regional is not None else None
         meta_path = static_dir / "meta.json"
-        if not args.force and meta_path.exists():
-            if json.loads(meta_path.read_text()).get("feedVersion") == version:
-                log.info("GTFS %s already built, nothing to do", version)
-                return
+        old = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        if not args.force and old.get("feedVersion") == version and (old.get("regional") or {}).get("version") == reg_version:
+            log.info("GTFS %s and regional GTFS %s already built, nothing to do", version, reg_version)
+            return
         (cache / "gtfs.zip").write_bytes(r.content)
         osm_path = cache / "osm.json"
-        if args.cached_osm and osm_path.exists():
+        # DPB's routes only change with its GTFS: when just the regional feed changed, reuse them.
+        if (args.cached_osm or old.get("feedVersion") == version) and osm_path.exists():
             osm = json.loads(osm_path.read_text())
         else:
             try:
@@ -445,13 +500,19 @@ def main() -> None:
 
     t0 = time.monotonic()
     out = build(gtfs, osm)
+    if regional is not None:
+        try:
+            build_regional(regional, out)
+        except Exception:  # DPB's build must not depend on the regional feed
+            log.exception("regional build failed; building DPB only")
     write(out, static_dir)
     log.info(
-        "built %d lines, %d stops in %.1f s; straight-line fallbacks: %s",
+        "built %d lines (%d regional), %d stops in %.1f s; straight-line fallbacks: %s",
         len(out["lines"]),
+        sum(1 for x in out["lines"].values() if x.get("regional")),
         len(out["stops"]),
         time.monotonic() - t0,
-        out["meta"]["fallbacks"] or "none",
+        {**out["meta"]["fallbacks"], **(out["meta"].get("regional") or {}).get("fallbacks", {})} or "none",
     )
 
 

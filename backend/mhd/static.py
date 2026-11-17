@@ -142,14 +142,22 @@ class Static:
     # --- matching ------------------------------------------------------------------------------
 
     def match_direction(
-        self, line: str | None, dest: str | None, lon: float, lat: float, az: int | None
+        self, line: str | None, dest: str | None, lon: float, lat: float, az: int | None, trip_no: int | None = None
     ) -> tuple[Direction, float, float, float | None] | None:
         """The direction a vehicle runs in, with its distance along the main route, its distance
         from the main route and its distance from the nearest branch shape (None without
-        branches), in metres. None for depot runs, unknown destinations and unknown lines."""
-        if line is None or dest is None:
+        branches), in metres. None for depot runs, unknown destinations and unknown lines.
+
+        A regional bus names its trip number: the directions of that number's trips are the
+        candidates, and its destination's only when the timetable doesn't have the number."""
+        if line is None:
             return None
-        cands = self.by_headsign.get((line, dest))
+        cands = None
+        if trip_no is not None and (tt := self.timetable) is not None:
+            nums = tt.by_number.get((line, str(trip_no)), ())
+            cands = sorted({d for i in nums if (d := tt.patterns[tt.trips[i].pattern].dir) is not None})
+        if not cands and dest is not None:
+            cands = self.by_headsign.get((line, dest))
         if not cands:
             return None
         best = None
@@ -210,25 +218,31 @@ class Trip:
     svc: str
     head: str
     t: array  # seconds after service-day midnight at each stop of the pattern
+    no: str | None = None  # trip number, for the regional trips their buses report
 
 
 class Timetable:
-    """The trips of timetable.json, indexed by direction, pattern and stop."""
+    """The trips of timetable.json, indexed by direction, pattern, stop and trip number."""
 
     def __init__(self, raw: dict, static: Static):
         self.patterns: list[Pattern] = []
         for p in raw["patterns"]:
             dr = static.directions.get(p["line"], {}).get(p["dir"]) if p["dir"] is not None else None
             self.patterns.append(Pattern(p["line"], p["dir"], p["stops"], _pattern_dist(p["stops"], dr, static)))
-        self.trips: list[Trip] = [Trip(t["id"], t["p"], t["svc"], t["head"], array("i", t["t"])) for t in raw["trips"]]
+        self.trips: list[Trip] = [
+            Trip(t["id"], t["p"], t["svc"], t["head"], array("i", t["t"]), t.get("no")) for t in raw["trips"]
+        ]
         self.by_id: dict[str, int] = {t.id: i for i, t in enumerate(self.trips)}
         self.by_pattern: list[list[int]] = [[] for _ in self.patterns]
         self.by_direction: dict[tuple[str, str], list[int]] = {}
+        self.by_number: dict[tuple[str, str], list[int]] = {}  # (line, trip number) -> trips, all days
         for i, t in enumerate(self.trips):
             self.by_pattern[t.pattern].append(i)
             p = self.patterns[t.pattern]
             if p.dir is not None:
                 self.by_direction.setdefault((p.line, p.dir), []).append(i)
+            if t.no is not None:
+                self.by_number.setdefault((p.line, t.no), []).append(i)
         # stop id -> (pattern, index in the pattern), every index but the last (an arrival)
         self.by_stop: dict[str, list[tuple[int, int]]] = {}
         for pi, p in enumerate(self.patterns):

@@ -3,6 +3,7 @@
 Environment:
   MHD_DATA_DIR      where logs and the static build live (default: ../data next to backend/)
   MHD_NO_POLL=1     don't start the poller or the nightly jobs (tests, frontend work against a fixture)
+  MHD_NO_REGIONAL=1 don't sweep the IDS BK map for regional buses (DPB's poller still runs)
   MHD_BASIC_AUTH    "user:password" to put everything behind HTTP basic auth while v1 is private
 
 Run a single worker (no `--workers N`): the poller and logger live in the process, and DPB
@@ -27,7 +28,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import derive, lineview, nightly
+from . import derive, idsbk, lineview, nightly
 from .history import History
 from .logger import PollLogger
 from .planner import MAX_RIDES, Planner
@@ -85,6 +86,8 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     async def lifespan(app: FastAPI):
         await asyncio.to_thread(current_static)  # the first load, before polls need it
         tasks = [asyncio.create_task(poller.run()), asyncio.create_task(nightly.run_forever(DATA_DIR))] if start_polling else []
+        if start_polling and os.environ.get("MHD_NO_REGIONAL") != "1":
+            tasks.append(asyncio.create_task(idsbk.Sweeper(poller.logger, poller.apply_regional).run()))
         yield
         for task in tasks:
             task.cancel()
@@ -101,8 +104,8 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         state["derived"] = lineview.derive_poll(snap, current_static())
         app.state.realtime = state["derived"].realtime
         events = stop_events.update(state["derived"].realtime)
-        if poller.logger is not None and snap.polled_at is not None:
-            poller.logger.log_stop_events(snap.polled_at, events)
+        if poller.logger is not None and snap.updated_at is not None:
+            poller.logger.log_stop_events(snap.updated_at, events)
         ms = (time.perf_counter() - t0) * 1000
         if ms > 500:
             logging.getLogger(__name__).warning("deriving the poll took %d ms", ms)
@@ -135,7 +138,8 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         vehicles = []
         for v in snap.vehicles:
             vehicles.append(_vehicle(v, snap, derived, now))
-        return JSONResponse({"feed": derive.feed_status(snap, now), "vehicles": vehicles}, headers=no_store)
+        body = {"feed": derive.feed_status(snap, now), "regionalFeed": derive.feed_status(snap.regional, now), "vehicles": vehicles}
+        return JSONResponse(body, headers=no_store)
 
     @app.get("/api/station/{code}")
     def station(code: str, stop: str | None = None):

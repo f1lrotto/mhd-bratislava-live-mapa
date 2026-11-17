@@ -222,6 +222,26 @@ def test_after_a_feed_outage_a_held_trip_has_to_fit_afresh(tmp_path):
     assert rt.trip_id("z") == "t1070" and rt.trip_id("x") is None
 
 
+def test_a_regional_bus_runs_the_trip_its_number_names_with_its_uncapped_delay(tmp_path):
+    _static(tmp_path)
+    f = tmp_path / "static" / "timetable.json"
+    tt = json.loads(f.read_text())
+    for i, t in enumerate(tt["trips"]):
+        t["no"] = str(2 * i + 1)  # t960 is trip 1, t970 trip 3, t980 trip 5 …
+    f.write_text(json.dumps(tt))
+    s = Static.load(tmp_path)
+    p = Poller(logger=None)
+    # At 4 km at 16:30, reporting 20 min: by its delay it would be the 16:00 trip (due at 4 km at
+    # 16:08), but it names trip 3, the 16:10. Its destination isn't a headsign of the line.
+    lon, lat = ll(4000, 3.0)
+    bus = Vehicle("idsbk:9", "83", "Bratislava, Východ", "bus", lat, lon, 1200, None, None, trip_no=3)
+    p.apply_regional(MON_1630, [bus])
+    rt = lineview.derive_poll(p.snapshot, s, MON_1630).realtime
+    assert rt.trip_vehicle() == {"t970": "idsbk:9"}
+    assert rt.service["idsbk:9"] == "running"
+    assert rt.trip_delays() == {"t970": 1200}  # the reported delay, not DPB's 15-min cap
+
+
 def test_stop_events_are_recorded_once_per_stop_passed(tmp_path):
     from mhd.stopevents import StopEventTracker
 
@@ -252,6 +272,23 @@ def test_stop_events_are_recorded_once_per_stop_passed(tmp_path):
         ("A", "16:30:00", None),
         ("M", "16:40:00", "16:39:23"),
     ]
+
+
+def test_a_regional_sweep_between_two_polls_does_not_move_stop_times(tmp_path):
+    from mhd.stopevents import StopEventTracker
+
+    s = _static(tmp_path)
+    p, tracker, events = Poller(logger=None), StopEventTracker(), []
+    at = lambda hhmmss: datetime.combine(MON_1630.date(), datetime.strptime(hhmmss, "%H:%M:%S").time(), TZ)  # noqa: E731
+    # The DPB bus of the test above passes M+30 m at 16:39:23. The sweep at 16:39:10 re-derives its
+    # 16:39:00 position, which must still count as seen at 16:39:00.
+    p.apply([_bus("b", 4800, 0)], at("16:39:00"))
+    events += tracker.update(lineview.derive_poll(p.snapshot, s).realtime)
+    p.apply_regional(at("16:39:10"), [])
+    events += tracker.update(lineview.derive_poll(p.snapshot, s).realtime)
+    p.apply([_bus("b", 5100, 0)], at("16:39:30"))
+    events += tracker.update(lineview.derive_poll(p.snapshot, s).realtime)
+    assert [(e["stop"], e["actual"].astimezone(TZ).strftime("%H:%M:%S")) for e in events] == [("M", "16:39:23")]
 
 
 def test_service_days_start_at_noon_minus_12_hours_on_dst_days():
