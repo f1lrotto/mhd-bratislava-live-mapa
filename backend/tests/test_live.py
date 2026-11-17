@@ -138,6 +138,23 @@ def test_api_live_feed_down():
     assert body["vehicles"][0]["line"] == "83"
 
 
+def test_heartbeat_reports_each_source():
+    """The monitor's alerts count these: each source's own freshness and vehicles."""
+    from mhd import heartbeat
+
+    p = Poller(logger=None)
+    p.apply([_veh("1"), _veh("2"), _veh("3")], T0)
+    p.apply_regional(T0 - timedelta(minutes=10), [_veh(feed.REGIONAL + "9")])
+    p.apply_regional(T0, None, "timeout")
+    now = T0 + timedelta(seconds=20)
+    by_source = {e["properties"]["source"]: e["properties"] for e in heartbeat.events(p, now, regional=True)}
+    assert by_source["dpb"] == {"source": "dpb", "ok": True, "vehicles": 3, "age_s": 20, "error": None,
+                                "$process_person_profile": False}
+    assert by_source["idsbk"]["ok"] is False and by_source["idsbk"]["vehicles"] == 1
+    assert by_source["idsbk"]["age_s"] == 620 and by_source["idsbk"]["error"] == "timeout"
+    assert [e["properties"]["source"] for e in heartbeat.events(p, now, regional=False)] == ["dpb"]
+
+
 def _record(vid, line, lat, lon, trip=1, delay=0, urban=False, train=False):
     """A record of the IDS BK map's vehicles/nearby endpoint (fields we don't read left out)."""
     return {"vehicleID": vid, "delayMinutes": delay, "latitude": lat, "longitude": lon,

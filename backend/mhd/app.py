@@ -5,6 +5,7 @@ Environment:
   MHD_NO_POLL=1     don't start the poller or the nightly jobs (tests, frontend work against a fixture)
   MHD_NO_REGIONAL=1 don't sweep the IDS BK map for regional buses (DPB's poller still runs)
   MHD_BASIC_AUTH    "user:password" to put everything behind HTTP basic auth while v1 is private
+  RAILWAY_ENVIRONMENT_NAME=production (set by Railway) sends feed heartbeats to PostHog (heartbeat.py)
 
 Run a single worker (no `--workers N`): the poller and logger live in the process, and DPB
 must see one client.
@@ -28,7 +29,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import derive, idsbk, lineview, nightly
+from . import derive, heartbeat, idsbk, lineview, nightly
 from .history import History
 from .logger import PollLogger
 from .planner import MAX_RIDES, Planner
@@ -86,8 +87,12 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     async def lifespan(app: FastAPI):
         await asyncio.to_thread(current_static)  # the first load, before polls need it
         tasks = [asyncio.create_task(poller.run()), asyncio.create_task(nightly.run_forever(DATA_DIR))] if start_polling else []
-        if start_polling and os.environ.get("MHD_NO_REGIONAL") != "1":
+        regional = os.environ.get("MHD_NO_REGIONAL") != "1"
+        if start_polling and regional:
             tasks.append(asyncio.create_task(idsbk.Sweeper(poller.logger, poller.apply_regional).run()))
+        # Only production reports to the monitor: a dev server's heartbeats would hide an outage.
+        if start_polling and os.environ.get("RAILWAY_ENVIRONMENT_NAME") == "production":
+            tasks.append(asyncio.create_task(heartbeat.run_forever(poller, regional)))
         yield
         for task in tasks:
             task.cancel()
