@@ -217,7 +217,7 @@
   /** The rest of a vehicle's way to the boarding stop: the approach cut where the vehicle is now. */
   function ahead(line: LonLat[], v: LonLat): LonLat[] | null {
     const k = Math.cos((v[1] * Math.PI) / 180)
-    let best = { d: Infinity, i: 0, p: line[0] }
+    let best = { d: Infinity, i: 0, t: 0, p: line[0] }
     for (let i = 0; i < line.length - 1; i++) {
       const [a, b] = [line[i], line[i + 1]]
       const dx = (b[0] - a[0]) * k, dy = b[1] - a[1]
@@ -225,10 +225,12 @@
       const t = len ? Math.max(0, Math.min(1, (((v[0] - a[0]) * k) * dx + (v[1] - a[1]) * dy) / len)) : 0
       const p: LonLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
       const d = metres(p, v)
-      if (d < best.d) best = { d, i, p }
+      if (d < best.d) best = { d, i, t, p }
     }
     // Off its way (e.g. still at the depot or on its previous trip): no line rather than a wrong one.
     if (best.d > 400) return null
+    // Past the boarding stop (beyond the line's end): nothing left to come.
+    if (best.i === line.length - 2 && best.t >= 1) return null
     const rest = [v, best.p, ...line.slice(best.i + 1)]
     return rest.length >= 2 && metres(rest[0], rest.at(-1)!) > 30 ? rest : null
   }
