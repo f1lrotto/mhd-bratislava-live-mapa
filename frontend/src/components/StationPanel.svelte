@@ -1,7 +1,6 @@
 <script lang="ts">
   import { getJson, poll } from '../lib/api'
   import { hm, minsUntil, plural } from '../lib/format'
-  import { stationEnd } from '../lib/places'
   import { app, navigate } from '../lib/state.svelte'
   import type { Departure, StationBoard } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
@@ -63,9 +62,7 @@
   }
 
   function plan(end: 'from' | 'to') {
-    const { value, name } = stationEnd(code)
-    if (name) app.placeNames = { ...app.placeNames, [value]: name }
-    navigate({ kind: 'plan', from: end === 'from' ? value : null, to: end === 'to' ? value : null, at: null, opt: null })
+    navigate({ kind: 'plan', from: end === 'from' ? code : null, to: end === 'to' ? code : null, at: null, opt: null })
   }
 </script>
 

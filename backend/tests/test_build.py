@@ -167,10 +167,17 @@ def _regional_zip() -> bytes:
     })
 
 
-def test_regional_feed_joins_the_build_and_stays_out_of_the_planner(tmp_path):
-    from mhd.planner import Planner
+def test_regional_feed_joins_the_build_and_the_planner(tmp_path):
+    from datetime import datetime
 
-    out = build.build(_gtfs(), {"elements": []})
+    from mhd.planner import TZ, Planner
+
+    gtfs = _gtfs()
+    for st in gtfs["stops"]:
+        st["stop_code"] = st["stop_id"]  # stations of their own, so rides between them count
+    gtfs["calendar"] = [{"service_id": "wd", "monday": "1", "tuesday": "1", "wednesday": "1", "thursday": "1",
+                         "friday": "1", "saturday": "0", "sunday": "0", "start_date": "20261101", "end_date": "20261231"}]
+    out = build.build(gtfs, {"elements": []})
     build.build_regional(_regional_zip(), out)
 
     line = out["lines"]["512"]
@@ -192,6 +199,10 @@ def test_regional_feed_joins_the_build_and_stays_out_of_the_planner(tmp_path):
 
     build.write(out, tmp_path / "static")
     p = Planner(tmp_path / "static")
-    assert p.stop_ids and not [s for s in p.stop_ids if s.startswith("idsbk:")]
-    assert not [c for c in p.stations if c.startswith("idsbk:")]
-    assert {p.pat_line[p.trip_pat[t[0]]] for t in p.trips} == {"69"}
+    # From DPB's stop C to Senec: line 69 to A (C 7:35, A 7:39), where the regional platform is,
+    # then 512's 8:00 trip. No regional stop is a walk away from C.
+    lon, lat = to_lonlat(BX + 600, BY + 600)
+    res = p.plan({"lat": lat, "lon": lon}, {"station": "idsbk:300"}, datetime(2026, 11, 16, 7, 20, tzinfo=TZ))
+    rides = [(leg["line"], leg["trip"], leg["from"]["stop"], leg["to"]["stop"]) for leg in res[0]["legs"] if leg["kind"] == "ride"]
+    assert rides == [("69", "back1", "C", "A"), ("512", "idsbk:t3", "idsbk:100", "idsbk:300")]
+    assert res[0]["arrive"] == "2026-11-16T08:20:00+01:00"

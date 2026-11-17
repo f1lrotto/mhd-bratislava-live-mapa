@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte'
   import { planQuery, poll, refreshPlan } from '../lib/api'
-  import { delayBand, delayText, durationText, fromLocalInput, hm, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
+  import { delayBand, delayText, durationText, fromLocalInput, hm, isRegional, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
   import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
   import type { FallbackOption, PlanOption, PlanReason, RideLeg } from '../lib/types'
@@ -237,6 +237,10 @@
   const walkMin = (s: string, e: string) => Math.max(1, minOf(e) - minOf(s))
   // Live delays: a ride a minute or more late shows its timetable time struck through.
   const isLate = (l: { delay: number | null }) => l.delay != null && l.delay >= 60
+  // A regional bus's delay has no 15-minute cap.
+  const lateText = (l: { line: string; delay: number | null }) => delayText(l.delay, false, !!app.lines[l.line]?.regional)
+  // DPB's vehicles go by fleet number; a regional bus has none and goes by its trip number.
+  const vehicleNo = (key: string) => (isRegional(key) ? app.live?.vehicles.find((v) => v.key === key)?.tripNo : key)
   const sched = (iso: string, delay: number | null) => new Date(Date.parse(iso) - (delay ?? 0) * 1000).toISOString()
   /** The worst change of an option with current delays. */
   function riskOf(o: PlanOption): 'missed' | 'tight' | null {
@@ -301,7 +305,7 @@
     const parts = [`Možnosť ${i + 1}: ${hm(o.depart)} až ${hm(fb ? fb.arrive : o.arrive)}, ${durationText(durOf(o))}`]
     if (o.tracked) parts.push('sledované spojenie')
     else if (isLive(o)) parts.push('naživo')
-    for (const l of rides(o)) if (isLate(l)) parts.push(`${l.line} mešká ${delayText(l.delay)}`)
+    for (const l of rides(o)) if (isLate(l)) parts.push(`${l.line} mešká ${lateText(l)}`)
     const r = riskOf(o)
     if (r === 'missed') parts.push(`prestup na ${riskLine(o)} nestihnete${fb ? `, pôvodne v cieli o ${hm(o.arrive)}` : ''}`)
     else if (r === 'tight') parts.push(`prestup na ${riskLine(o)} je ohrozený`)
@@ -477,7 +481,7 @@
                 <div class="risk-box" class:missed tabindex="-1">
                   <strong>{missed ? `Prestup na ${l.line} nestihnete` : `Prestup na ${l.line} je ohrozený`}</strong>
                   <span>
-                    {prev.line}{isLate(prev) ? ` mešká ${delayText(prev.delay)} a` : ''}
+                    {prev.line}{isLate(prev) ? ` mešká ${lateText(prev)} a` : ''}
                     {missed ? `príde o ${hm(prev.end)}, ${l.line} odchádza o ${hm(l.start)}.` : `${spareText(l.transfer.margin)}.`}
                   </span>
                   {#if fb}
@@ -501,13 +505,14 @@
                 <span class="hs">→ {l.headsign}</span>
               </div>
               {#if l.vehicle}
+                {@const no = vehicleNo(l.vehicle)}
                 <button class="mine" onclick={() => navigate({ kind: 'vehicle', key: l.vehicle! })}>
                   <span class="live-dot" aria-hidden="true"></span>
-                  <span>Váš spoj č. {l.vehicle}{#if l.delay != null}{' · '}<span class="nowrap">{l.delay < 60 ? 'načas' : `mešká ${delayText(l.delay)}`}</span>{/if}</span>
+                  <span>Váš spoj{no != null ? ` č. ${no}` : ''}{#if l.delay != null}{' · '}<span class="nowrap">{l.delay < 60 ? 'načas' : `mešká ${lateText(l)}`}</span>{/if}</span>
                   <span aria-hidden="true">›</span>
                 </button>
               {:else if l.delay != null}
-                <span class="mine static"><span class="live-dot" aria-hidden="true"></span>{l.delay < 60 ? 'načas' : `mešká ${delayText(l.delay)}`}</span>
+                <span class="mine static"><span class="live-dot" aria-hidden="true"></span>{l.delay < 60 ? 'načas' : `mešká ${lateText(l)}`}</span>
               {/if}
               <button class="count" onclick={() => (openStops = { ...openStops, [i]: !openStops[i] })} aria-expanded={!!openStops[i]} disabled={!mid.length}>
                 {walkMin(l.start, l.end)} min · {plural(l.stops.length - 1, 'zastávka', 'zastávky', 'zastávok')}
