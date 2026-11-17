@@ -7,7 +7,7 @@
   import { planQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages } from './lib/markers'
-  import { placeCoords, placeLabel, pointValue, setPlanEnd, stationEnd } from './lib/places'
+  import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
@@ -679,10 +679,8 @@
         app.pick = null
         const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
         const code = f && String(f.properties.station ?? f.properties.code ?? '')
-        if (code && app.stations[code]) {
-          const s = stationEnd(code)
-          setPlanEnd(end, s.value, s.name)
-        } else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        if (code && app.stations[code]) setPlanEnd(end, code)
+        else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
         return
       }
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
@@ -712,12 +710,13 @@
       style: STYLE,
       center: [17.115, 48.152],
       zoom: 12,
-      minZoom: 9,
+      // Zoom 8 fits the whole IDS BK area (idsbk.AREA) on a phone. The bounds reach 60–70 km past
+      // it on every side, so any part of it can be panned clear of the panel.
+      minZoom: 8,
       maxZoom: 18,
-      // Bratislava and the IDS BK regional lines (Malacky, Senica, Trnava, Dunajská Streda).
       maxBounds: [
-        [16.6, 47.85],
-        [17.75, 48.75],
+        [15.9, 47.35],
+        [18.6, 49.15],
       ],
       attributionControl: false,
       locale: {
