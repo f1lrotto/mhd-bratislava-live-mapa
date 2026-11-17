@@ -7,8 +7,8 @@
   import { planQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages } from './lib/markers'
-  import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
-  import { app, closePanel, feedDown, navigate } from './lib/state.svelte'
+  import { placeCoords, placeLabel, pointValue, setPlanEnd, stationEnd } from './lib/places'
+  import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
   let { activeLine, selectedDir }: { activeLine: string | null; selectedDir: string | null } = $props()
@@ -88,6 +88,7 @@
     const live = app.live
     if (!src || !live) return
     const down = feedDown()
+    const rDown = regionalDown()
     const view = app.view
     const selKey = view.kind === 'vehicle' ? view.key : null
     const features = []
@@ -109,8 +110,8 @@
         properties: {
           key: v.key,
           line: v.line ?? '',
-          type: v.type,
-          c: down || v.stale || dim || idle ? 's' : v.band == null ? 'n' : String(v.band),
+          type: v.regional ? 'regional' : v.type,
+          c: (v.regional ? rDown : down) || v.stale || dim || idle ? 's' : v.band == null ? 'n' : String(v.band),
           az: v.az ?? -1,
           dim,
           other,
@@ -678,8 +679,10 @@
         app.pick = null
         const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
         const code = f && String(f.properties.station ?? f.properties.code ?? '')
-        if (code && app.stations[code]) setPlanEnd(end, code)
-        else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        if (code && app.stations[code]) {
+          const s = stationEnd(code)
+          setPlanEnd(end, s.value, s.name)
+        } else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
         return
       }
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
@@ -711,9 +714,10 @@
       zoom: 12,
       minZoom: 9,
       maxZoom: 18,
+      // Bratislava and the IDS BK regional lines (Malacky, Senica, Trnava, Dunajská Streda).
       maxBounds: [
-        [16.6, 47.9],
-        [17.65, 48.4],
+        [16.6, 47.85],
+        [17.75, 48.75],
       ],
       attributionControl: false,
       locale: {
@@ -732,7 +736,7 @@
     m.addControl(
       new maplibregl.AttributionControl({
         compact: true,
-        customAttribution: 'Cestovný poriadok © DPB, Hlavné mesto SR Bratislava (CC BY 4.0)',
+        customAttribution: ['Cestovný poriadok © DPB, Hlavné mesto SR Bratislava (CC BY 4.0)', 'Regionálne autobusy: IDS BK'],
       }),
       'bottom-right',
     )
@@ -762,7 +766,7 @@
 
   // Filters, selection, the active line or feed state changed: redraw at the current frame.
   $effect(() => {
-    void [app.filters, app.view, activeLine, selectedDir, planKeys, feedDown()]
+    void [app.filters, app.view, activeLine, selectedDir, planKeys, feedDown(), regionalDown()]
     if (loaded) untrack(() => render(progress()))
   })
 

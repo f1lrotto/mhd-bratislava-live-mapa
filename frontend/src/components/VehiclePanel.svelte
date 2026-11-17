@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getJson, poll } from '../lib/api'
-  import { agoText, bandColor, delayText, hm, TYPE_LABELS } from '../lib/format'
-  import { app, feedDown, navigate } from '../lib/state.svelte'
+  import { agoText, bandColor, delayText, hm, isRegional, TYPE_LABELS, vehicleName } from '../lib/format'
+  import { app, feedDown, navigate, regionalDown } from '../lib/state.svelte'
   import type { ServiceState, VehicleDetail } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
@@ -28,6 +28,9 @@
   const trip = $derived(detail?.vehicle.key === key ? detail.trip : null)
   const nextStops = $derived(trip ? (allStops ? trip.stops : trip.stops.slice(0, 8)) : [])
   const running = $derived(v?.service === 'running')
+  const regional = $derived(isRegional(key))
+  const name = $derived(vehicleName(key, v?.tripNo))
+  const operator = $derived(regional && v?.line ? app.lines[v.line]?.operator : null)
   const SERVICE: Record<ServiceState, string> = {
     running: 'V prevádzke',
     layover: 'Na konečnej, čaká na odchod',
@@ -48,29 +51,33 @@
     to_depot: 'Ide do depa, preto nie je v poradí linky.',
     no_destination: 'Vozidlo nehlási cieľ, smer nevieme určiť.',
     unknown_direction: 'Cieľ nepatrí žiadnemu smeru linky v cestovnom poriadku.',
+    unknown_trip: 'Spoj nie je v cestovnom poriadku IDS BK.',
     unknown_line: 'Linka nie je v cestovnom poriadku DPB.',
   }
+  const reason = (r: string) => (regional && r === 'unknown_line' ? 'Linka nie je v cestovnom poriadku IDS BK.' : (REASONS[r] ?? ''))
 </script>
 
-<Panel label="Vozidlo {key}">
+<Panel label="Vozidlo {name}">
   {#snippet header()}
     {#if v?.line}<LineBadge line={v.line} size="lg" />{/if}
     <div class="head-text">
-      <strong class="dest">{v ? (v.dest ? `→ ${v.dest}` : 'Bez cieľa') : `Vozidlo ${key}`}</strong>
-      <span class="muted">{v ? TYPE_LABELS[v.type] : ''} č. {key}</span>
+      <strong class="dest">{v ? (v.dest ? `→ ${v.dest}` : 'Bez cieľa') : regional ? 'Regionálny spoj' : `Vozidlo ${key}`}</strong>
+      <span class="muted">{regional ? 'regionálny autobus' : v ? TYPE_LABELS[v.type] : ''} {name}</span>
     </div>
   {/snippet}
 
   {#if !app.live}
     <p class="note">Načítavam polohy…</p>
   {:else if !v}
-    <p class="note">Vozidlo č. {key} teraz nie je v prevádzke alebo nehlási polohu.</p>
+    <p class="note">
+      {regional ? 'Spoj už skončil alebo nehlási polohu.' : `Vozidlo č. ${key} teraz nie je v prevádzke alebo nehlási polohu.`}
+    </p>
   {:else}
     <div class="facts">
       {#if running}
         <div class="fact">
           <span class="label">Meškanie</span>
-          <span class="value" style:color={bandColor(v.band)}>{delayText(v.delay, v.delayCapped)}</span>
+          <span class="value" style:color={bandColor(v.band)}>{delayText(v.delay, v.delayCapped, v.regional)}</span>
         </div>
       {:else}
         <div class="fact">
@@ -87,7 +94,10 @@
     {#if v.delayCapped && running}
       <p class="note">Systém DPB nehlási viac ako 15 minút, skutočné meškanie môže byť vyššie.</p>
     {/if}
-    {#if feedDown()}
+    {#if operator}
+      <p class="muted small">Dopravca: {operator}</p>
+    {/if}
+    {#if regional ? regionalDown() : feedDown()}
       <p class="note warn">Dáta o polohe sú staré, vozidlo už môže byť inde.</p>
     {:else if v.stale}
       <p class="note warn">Poloha sa viac ako 10 minút nezmenila. Vozidlo môže stáť alebo nehlásiť polohu.</p>
@@ -174,12 +184,12 @@
         {/if}
       </p>
     {:else if unmatched && !(unmatched.reason === 'to_depot' && v.service === 'depot')}
-      <p class="note">{REASONS[unmatched.reason] ?? ''}</p>
+      <p class="note">{reason(unmatched.reason)}</p>
     {/if}
 
     {#if v.line && app.lines[v.line]}
       <button class="primary" onclick={() => navigate({ kind: 'line', line: v.line!, dir: v.dir })}>
-        Celá linka {v.line}: poradie a medzery
+        Celá linka {v.line}: {regional ? 'trasa a spoje' : 'poradie a medzery'}
       </button>
     {/if}
   {/if}

@@ -9,7 +9,7 @@
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
   import { passes } from './lib/filter'
-  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
+  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, NO_FILTERS, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
   const initial = parseUrl()
@@ -153,7 +153,7 @@
     </div>
   {:else if app.view.kind === 'none' && app.live && !down}
     {#if nFilters && !app.live.vehicles.some((v) => passes(v, app.filters))}
-      <button class="hint-pill" onclick={() => setFilters({ types: [], lines: [], late: false })}
+      <button class="hint-pill" onclick={() => setFilters(NO_FILTERS)}
         >Filtre skryli všetky vozidlá · Zrušiť</button
       >
     {:else}

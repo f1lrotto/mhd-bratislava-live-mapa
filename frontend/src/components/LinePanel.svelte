@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { bandColor, delayBand, delayText, minutes, plural, TYPE_LABELS } from '../lib/format'
+  import { bandColor, delayBand, delayText, minutes, plural, TYPE_LABELS, vehicleName } from '../lib/format'
   import { app, navigate } from '../lib/state.svelte'
   import type { LineDirection, RibbonVehicle } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
@@ -9,6 +9,7 @@
 
   const lv = $derived(app.lineView?.line === line ? app.lineView : null)
   const info = $derived(app.lines[line])
+  const regional = $derived(!!info?.regional)
   const current = $derived(lv?.directions.find((d) => d.id === dir) ?? lv?.directions[0] ?? null)
   // Running vehicles are on the ribbon and in the order list. Parked (position unchanged 10+ min)
   // and off-route vehicles aren't part of the service right now, so they get their own list.
@@ -44,7 +45,7 @@
     const s = d.summary
     const parts = [plural(s.count, 'vozidlo', 'vozidlá', 'vozidiel') + ` smer ${d.headsign}`]
     if (s.medianDelay != null)
-      parts.push(s.medianDelay < 120 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay)}`)
+      parts.push(s.medianDelay < 120 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay, false, regional)}`)
     if (s.biggestGap) {
       const g = s.biggestGap
       parts.push(
@@ -65,6 +66,7 @@
     to_depot: 'do depa',
     no_destination: 'bez cieľa',
     unknown_direction: 'neznámy smer',
+    unknown_trip: 'spoj nie je v cestovnom poriadku',
     unknown_line: 'linka nie je v cestovnom poriadku',
   }
 </script>
@@ -74,7 +76,7 @@
     <LineBadge {line} size="lg" />
     <div class="head-text">
       <strong>Linka {line}</strong>
-      <span class="muted">{info ? TYPE_LABELS[info.type] : ''}</span>
+      <span class="muted">{regional ? `regionálny autobus${info.operator ? ` · ${info.operator}` : ''}` : info ? TYPE_LABELS[info.type] : ''}</span>
     </div>
   {/snippet}
 
@@ -139,7 +141,7 @@
           style:top="{14 - 13 * (row.get(v.key) ?? 0)}px"
           style:background={bandColor(delayBand(v.delay))}
           tabindex="-1"
-          aria-label="Vozidlo {v.key}"
+          aria-label="Vozidlo {vehicleName(v.key, v.tripNo)}"
           onclick={() => openVehicle(v.key)}
         ></button>
       {/each}
@@ -158,9 +160,9 @@
               <span class="pip" style:background={bandColor(delayBand(v.delay))}></span>
               <span class="row-main">
                 <span class="where">{where(current, v)}</span>
-                <span class="muted small">č. {v.key}</span>
+                <span class="muted small">{vehicleName(v.key, v.tripNo)}</span>
               </span>
-              <span class="delay" class:late={(v.delay ?? 0) >= 300}>{delayText(v.delay)}</span>
+              <span class="delay" class:late={(v.delay ?? 0) >= 300}>{delayText(v.delay, false, regional)}</span>
             </button>
             {#if v.gapAhead && i < running.length - 1}
               <div class="between {v.gapAhead.flag ?? ''}">
@@ -187,9 +189,9 @@
               <span class="pip" style:background="var(--stale)"></span>
               <span class="row-main">
                 <span class="where">{v.offRoute ? 'mimo trasy' : where(current, v)}</span>
-                <span class="muted small">č. {v.key}{v.stale ? ' · poloha sa nemení 10+ min' : ''}</span>
+                <span class="muted small">{vehicleName(v.key, v.tripNo)}{v.stale ? ' · poloha sa nemení 10+ min' : ''}</span>
               </span>
-              <span class="delay muted">{delayText(v.delay)}</span>
+              <span class="delay muted">{delayText(v.delay, false, regional)}</span>
             </button>
           </li>
         {/each}
@@ -203,7 +205,7 @@
           <li>
             <button class="row" onclick={() => openVehicle(u.key)}>
               <span class="row-main"
-                ><span>č. {u.key}</span><span class="muted small">{u.dest ?? 'bez cieľa'} · {UNMATCHED[u.reason] ?? u.reason}</span></span
+                ><span>{vehicleName(u.key, null)}</span><span class="muted small">{u.dest ?? 'bez cieľa'} · {UNMATCHED[u.reason] ?? u.reason}</span></span
               >
             </button>
           </li>

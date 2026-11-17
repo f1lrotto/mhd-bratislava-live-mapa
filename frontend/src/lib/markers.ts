@@ -2,7 +2,8 @@ import type { Map as MlMap } from 'maplibre-gl'
 import { BAND_COLORS, NO_DATA_COLOR, STALE_COLOR } from './format'
 
 // Marker images, drawn once on canvases at device resolution:
-//   body-<type>-<colour key>   shape by vehicle type, fill by delay band, the line number is a text layer
+//   body-<type>-<colour key>   shape by vehicle type, fill by delay band, the line number is a text layer;
+//                              type "regional" is an IDS BK bus: a bus circle with a dark outer ring
 //   arrow-<colour key>         a pointer just outside the body, rotated to the heading
 // Colour keys: 0..3 delay bands, n = no data, s = stale.
 
@@ -11,6 +12,7 @@ const BODY = 32
 const ARROW = 50
 
 export const COLOR_KEYS = ['0', '1', '2', '3', 'n', 's'] as const
+const REGIONAL_RING = '#1d232b'
 const COLORS: Record<string, string> = {
   '0': BAND_COLORS[0],
   '1': BAND_COLORS[1],
@@ -46,6 +48,8 @@ function shapePath(ctx: CanvasRenderingContext2D, type: string): void {
     ctx.closePath()
   } else if (type === 'trolleybus') {
     ctx.roundRect(c - 13.5, c - 13.5, 27, 27, 6)
+  } else if (type === 'regional') {
+    ctx.arc(c, c, 13, 0, Math.PI * 2)
   } else {
     ctx.arc(c, c, 14.5, 0, Math.PI * 2)
   }
@@ -59,6 +63,13 @@ function body(type: string, color: string): ImageData {
   ctx.lineWidth = 2
   ctx.strokeStyle = '#ffffff'
   ctx.stroke()
+  if (type === 'regional') {
+    ctx.beginPath()
+    ctx.arc(BODY / 2, BODY / 2, 14.9, 0, Math.PI * 2)
+    ctx.lineWidth = 2
+    ctx.strokeStyle = REGIONAL_RING
+    ctx.stroke()
+  }
   return ctx.getImageData(0, 0, BODY * RATIO, BODY * RATIO)
 }
 
@@ -80,7 +91,7 @@ function arrow(color: string): ImageData {
 
 export function addMarkerImages(map: MlMap): void {
   for (const key of COLOR_KEYS) {
-    for (const type of ['bus', 'trolleybus', 'tram', 'other']) {
+    for (const type of ['bus', 'trolleybus', 'tram', 'other', 'regional']) {
       map.addImage(`body-${type}-${key}`, body(type, COLORS[key]), { pixelRatio: RATIO })
     }
     map.addImage(`arrow-${key}`, arrow(COLORS[key]), { pixelRatio: RATIO })
@@ -95,7 +106,9 @@ export function shapeSvg(type: string, color: string, size = 16): string {
       ? `<polygon points="5,1 11,1 15,5 15,11 11,15 5,15 1,11 1,5" />`
       : type === 'trolleybus'
         ? `<rect x="1.5" y="1.5" width="13" height="13" rx="3.5" />`
-        : `<circle cx="8" cy="8" r="7" />`
+        : type === 'regional'
+          ? `<circle cx="8" cy="8" r="5.6" /><circle cx="8" cy="8" r="7.1" fill="none" stroke="${REGIONAL_RING}" stroke-width="1.3" />`
+          : `<circle cx="8" cy="8" r="7" />`
   return `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="${color}" stroke="#fff" stroke-width="1.2" aria-hidden="true">${shape}</svg>`
 }
 

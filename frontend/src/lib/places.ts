@@ -1,4 +1,4 @@
-import { fold } from './format'
+import { fold, isRegional } from './format'
 import { app, navigate } from './state.svelte'
 import type { PlanOption } from './types'
 
@@ -30,6 +30,7 @@ export function searchStations(query: string, limit = 8): { code: string; name: 
   if (!q) return []
   const hits: { code: string; name: string; lines: string[]; score: number }[] = []
   for (const [code, st] of Object.entries(app.stations)) {
+    if (isRegional(code)) continue // the planner knows DPB's stations only
     const n = fold(st.name)
     const i = n.indexOf(q)
     if (i < 0) continue
@@ -38,6 +39,13 @@ export function searchStations(query: string, limit = 8): { code: string; name: 
   }
   hits.sort((a, b) => a.score - b.score || b.lines.length - a.lines.length || a.name.localeCompare(b.name, 'sk'))
   return hits.slice(0, limit)
+}
+
+/** A station as a planner end: its code, or for a regional stop (the planner knows DPB's stations
+ * only) its point, from which the planner walks to DPB's stops nearby. */
+export function stationEnd(code: string): { value: string; name?: string } {
+  const st = app.stations[code]
+  return isRegional(code) && st ? { value: pointValue(st.lat, st.lon), name: st.name } : { value: code }
 }
 
 /** Set one end of the open plan (a station code or a point), keeping the other end and the time. */

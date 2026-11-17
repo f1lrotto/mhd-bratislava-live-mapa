@@ -24,12 +24,18 @@ export interface LiveVehicle {
   dir: string | null
   service: ServiceState
   trip: string | null
+  /** An IDS BK regional bus: its key is "idsbk:" + the trip's id, and it has no fleet number. */
+  regional: boolean
+  /** A regional bus's trip number (spoj č.), null for DPB vehicles. */
+  tripNo: number | null
 }
 
 export type ServiceState = 'running' | 'layover' | 'depot' | 'parked' | 'unknown'
 
 export interface Live {
   feed: Feed
+  /** The IDS BK source of the regional buses. */
+  regionalFeed: Feed
   vehicles: LiveVehicle[]
 }
 
@@ -39,6 +45,9 @@ export interface LineInfo {
   color: string
   textColor: string
   directions: Record<string, { headsign: string; from: string; stops: string[] }>
+  /** An IDS BK regional line (ids of its stops and stations start with "idsbk:"). */
+  regional?: boolean
+  operator?: string | null
 }
 
 export interface StopInfo {
@@ -209,6 +218,7 @@ export interface RibbonVehicle {
   stale: boolean
   dest: string | null
   type: VehicleType
+  tripNo: number | null
   lastStop: number
   gapAhead?: Gap
 }

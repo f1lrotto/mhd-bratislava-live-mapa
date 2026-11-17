@@ -2,7 +2,7 @@
   import { BAND_COLORS, BAND_LABELS, NO_DATA_COLOR, STALE_COLOR, TYPE_PLURAL } from '../lib/format'
   import { passes } from '../lib/filter'
   import { shapeSvg } from '../lib/markers'
-  import { app, filtersActive, setFilters } from '../lib/state.svelte'
+  import { app, filtersActive, NO_FILTERS, regionalDown, setFilters } from '../lib/state.svelte'
   import type { VehicleType } from '../lib/types'
   import LineGrid from './LineGrid.svelte'
   import Panel from './Panel.svelte'
@@ -37,7 +37,14 @@
         {TYPE_PLURAL[t]}
       </button>
     {/each}
+    <button class="toggle" aria-pressed={f.regional} onclick={() => setFilters({ regional: !f.regional })}>
+      {@html shapeSvg('regional', '#5b6470', 16)}
+      Regionálne autobusy
+    </button>
   </div>
+  {#if f.regional && regionalDown()}
+    <p class="count empty">Polohy regionálnych autobusov (IDS BK) sa teraz nedajú načítať.</p>
+  {/if}
   <label class="switch">
     <input type="checkbox" checked={f.late} onchange={(e) => setFilters({ late: e.currentTarget.checked })} />
     Len meškajúce 5+ min
@@ -48,7 +55,7 @@
   </p>
 
   {#if filtersActive()}
-    <button class="secondary" onclick={() => setFilters({ types: [], lines: [], late: false })}>Zrušiť filtre</button>
+    <button class="secondary" onclick={() => setFilters(NO_FILTERS)}>Zrušiť filtre</button>
   {/if}
 
   <h3 class="section">Legenda</h3>
@@ -62,6 +69,7 @@
     {#each TYPES as t (t)}
       <li>{@html shapeSvg(t, '#5b6470', 16)} {TYPE_PLURAL[t].toLowerCase()}</li>
     {/each}
+    <li>{@html shapeSvg('regional', '#5b6470', 16)} regionálne autobusy IDS BK</li>
   </ul>
   <p class="muted small">Šípka pri značke ukazuje smer jazdy.</p>
 

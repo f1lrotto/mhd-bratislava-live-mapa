@@ -20,9 +20,10 @@ export function delayBand(delay: number | null): number | null {
   return 3
 }
 
-export function delayText(delay: number | null, capped = false): string {
+/** regional: an IDS BK delay, which has no 15-minute cap. */
+export function delayText(delay: number | null, capped = false, regional = false): string {
   if (delay == null) return 'bez údajov'
-  if (capped || delay >= 900) return '15+ min'
+  if (capped || (!regional && delay >= 900)) return '15+ min'
   if (delay < 60) return 'načas'
   return `${Math.floor(delay / 60)} min`
 }
@@ -51,6 +52,17 @@ export const TYPE_PLURAL: Record<VehicleType, string> = {
   trolleybus: 'Trolejbusy',
   bus: 'Autobusy',
   other: 'Ostatné',
+}
+
+/** IDS BK's vehicle keys, stop ids and station codes; DPB's are fleet numbers and DPB's ids. */
+export function isRegional(id: string): boolean {
+  return id.startsWith('idsbk:')
+}
+
+/** How a vehicle is called: DPB's fleet number, or a regional bus's trip number (it has no fleet number). */
+export function vehicleName(key: string, tripNo: number | null | undefined): string {
+  if (!isRegional(key)) return `č. ${key}`
+  return tripNo != null ? `spoj č. ${tripNo}` : 'regionálny spoj'
 }
 
 /** Slovak plural for counts: 1 vozidlo, 2–4 vozidlá, 5+ vozidiel. */

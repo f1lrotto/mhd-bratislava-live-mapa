@@ -20,11 +20,13 @@
     const lines = Object.values(app.lines)
       .filter((l) => !q || l.line.toLowerCase().startsWith(q) || Object.values(l.directions).some((d) => d.headsign.toLowerCase().includes(q)))
       .sort((a, b) => compareLines(a.line, b.line))
+    const dpb = lines.filter((l) => !l.regional)
     return [
-      { title: 'Električky', items: lines.filter((l) => l.type === 'tram') },
-      { title: 'Trolejbusy', items: lines.filter((l) => l.type === 'trolleybus' && !isNight(l.line)) },
-      { title: 'Autobusy', items: lines.filter((l) => l.type === 'bus' && !isNight(l.line)) },
-      { title: 'Nočné', items: lines.filter((l) => isNight(l.line)) },
+      { title: 'Električky', items: dpb.filter((l) => l.type === 'tram') },
+      { title: 'Trolejbusy', items: dpb.filter((l) => l.type === 'trolleybus' && !isNight(l.line)) },
+      { title: 'Autobusy', items: dpb.filter((l) => l.type === 'bus' && !isNight(l.line)) },
+      { title: 'Nočné', items: dpb.filter((l) => isNight(l.line)) },
+      { title: 'Regionálne autobusy IDS BK', items: lines.filter((l) => l.regional) },
     ].filter((g) => g.items.length)
   })
 </script>
