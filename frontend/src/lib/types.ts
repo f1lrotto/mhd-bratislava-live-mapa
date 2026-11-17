@@ -261,5 +261,11 @@ export interface CityStatus {
   shareLate: number | null
   worst: { line: string; medianDelay: number; vehicles: number; shareLate: number; type: VehicleType | null }[]
   feed: Feed
-  history: { bucketS: number; today: Record<string, number>; baseline: Record<string, number> | null } | null
+  /** Shares of stop passes by bucket: `today` and `baseline` 5+ min late, `todayDelayed` 2+ min. */
+  history: {
+    bucketS: number
+    today: Record<string, number>
+    todayDelayed: Record<string, number>
+    baseline: Record<string, number> | null
+  } | null
 }

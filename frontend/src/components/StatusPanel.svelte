@@ -21,7 +21,13 @@
   // Round up to the next 10 % above the data, so the curve never touches the top edge.
   const maxShare = $derived(
     Math.ceil(
-      Math.max(0.1, ...Object.values(st?.history?.today ?? {}), ...Object.values(st?.history?.baseline ?? {})) * 10 +
+      Math.max(
+        0.1,
+        ...Object.values(st?.history?.today ?? {}),
+        ...Object.values(st?.history?.todayDelayed ?? {}),
+        ...Object.values(st?.history?.baseline ?? {}),
+      ) *
+        10 +
         0.1,
     ) / 10,
   )
@@ -47,12 +53,21 @@
   const area = (r: [number, number][]) => `${line(r)}V${bottom}H${r[0][0].toFixed(1)}Z`
 
   const todayRuns = $derived(runs(st?.history?.today))
+  const delayedRuns = $derived(runs(st?.history?.todayDelayed))
   const baseRuns = $derived(runs(st?.history?.baseline))
-  const last = $derived.by(() => {
-    const today = st?.history?.today ?? {}
-    const b = Math.max(...Object.keys(today).map(Number))
-    return Number.isFinite(b) ? { x: x(b), y: y(today[b]), v: today[b] } : null
-  })
+  function lastOf(curve: Record<string, number> | undefined) {
+    const b = Math.max(...Object.keys(curve ?? {}).map(Number))
+    return Number.isFinite(b) ? { x: x(b), y: y(curve![b]), v: curve![b] } : null
+  }
+  const last = $derived(lastOf(st?.history?.today))
+  const lastDelayed = $derived(lastOf(st?.history?.todayDelayed))
+  // The 2+ min curve is never below the 5+ one. Both labels stay above both dots: when the two are
+  // close, the 5+ label moves up above the 2+ dot and the 2+ label stacks above it.
+  const lateLabelY = $derived(
+    last && lastDelayed && last.y - lastDelayed.y < 18 ? lastDelayed.y - 7 : (last?.y ?? 0) - 7,
+  )
+  const delayedLabelY = $derived(Math.min((lastDelayed?.y ?? 0) - 7, last ? lateLabelY - 13 : Infinity))
+  const labelX = (px: number) => Math.min(Math.max(px, L + 12), W - R - 12)
 </script>
 
 <Panel tall label="Stav dopravy">
@@ -102,7 +117,7 @@
         class="chart"
         viewBox="0 0 {W} {bottom + 16}"
         role="img"
-        aria-label="Podiel meškajúcich vozidiel dnes, naposledy {pct(last?.v)}"
+        aria-label="Podiel spojov meškajúcich dnes, naposledy {pct(lastDelayed?.v)} 2+ min a {pct(last?.v)} 5+ min"
       >
         {#each yTicks as v (v)}
           <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} class:axis={v === 0} class="grid" />
@@ -113,17 +128,23 @@
         {/each}
         {#each todayRuns as r, i (i)}<path d={area(r)} class="fill" />{/each}
         {#each baseRuns as r, i (i)}<path d={line(r)} class="base" />{/each}
+        {#each delayedRuns as r, i (i)}<path d={line(r)} class="delayed" />{/each}
         {#each todayRuns as r, i (i)}<path d={line(r)} class="today" />{/each}
-        {#if last}
-          <circle cx={last.x} cy={last.y} r="3" class="dot" />
-          <text x={Math.min(Math.max(last.x, L + 12), W - R - 12)} y={last.y - 7} text-anchor="middle" class="value-label">
-            {pct(last.v)}
+        {#if lastDelayed}
+          <text x={labelX(lastDelayed.x)} y={delayedLabelY} text-anchor="middle" class="value-label delayed-label">
+            {pct(lastDelayed.v)}
           </text>
+          <circle cx={lastDelayed.x} cy={lastDelayed.y} r="3" class="dot delayed-dot" />
+        {/if}
+        {#if last}
+          <text x={labelX(last.x)} y={lateLabelY} text-anchor="middle" class="value-label">{pct(last.v)}</text>
+          <circle cx={last.x} cy={last.y} r="3" class="dot" />
         {/if}
       </svg>
       <p class="legend">
-        <span class="key today-key"></span> dnes
-        {#if st.history.baseline}<span class="key base-key"></span> bežný deň (medián 4 rovnakých dní){/if}
+        <span class="key delayed-key"></span> 2+ min
+        <span class="key today-key"></span> 5+ min
+        {#if st.history.baseline}<span class="key base-key"></span> 5+ min v bežný deň (medián 4 rovnakých dní){/if}
       </p>
     {:else}
       <p class="note">Graf sa zobrazí, keď sa nazbiera aspoň hodina záznamov.</p>
@@ -227,6 +248,19 @@
   .dot {
     fill: var(--accent);
   }
+  .delayed {
+    fill: none;
+    stroke: var(--warn);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+  }
+  .dot.delayed-dot {
+    fill: var(--warn);
+  }
+  .chart .delayed-label {
+    fill: var(--warn-text);
+  }
   .base {
     fill: none;
     stroke: #8d95a0;
@@ -247,8 +281,14 @@
     height: 0;
     border-top: 2px solid var(--accent);
   }
+  .delayed-key {
+    border-top-color: var(--warn);
+  }
+  .today-key,
+  .base-key {
+    margin-left: 8px;
+  }
   .base-key {
     border-top: 2px dashed #8d95a0;
-    margin-left: 8px;
   }
 </style>

@@ -154,19 +154,26 @@ def test_parked_vehicles_get_no_flags_and_leave_city_status(tmp_path):
 
 
 def test_history_buckets_by_local_wall_clock_on_dst_day(tmp_path):
-    from datetime import timezone
+    from datetime import date, timezone
 
-    from mhd.history import day_curve
+    from mhd.history import day_curves
     from mhd.logger import PollLogger
 
     lg = PollLogger(tmp_path)
     # 31 Oct 2027 has 25 hours in Bratislava. 22:05 local is 21:05 UTC (after the change to CET).
     ts = datetime(2027, 10, 31, 21, 5, tzinfo=timezone.utc)
-    lg.log_poll(ts, [_bus("a", 100, 300), _bus("b", 200, 0)], 10, None)
-    lg.compact_finished(now=ts + timedelta(hours=3))
-    from datetime import date
 
-    assert day_curve(tmp_path, date(2027, 10, 31)) == {22 * 6: 0.5}
+    def passed(vehicle, seq, delay):
+        return {"ts": ts, "service_date": date(2027, 10, 31), "trip": vehicle, "line": "83", "dir": "0", "seq": seq,
+                "stop": "M", "scheduled": ts - timedelta(seconds=delay), "actual": ts, "delay_s": delay,
+                "vehicle": vehicle, "final": False}
+
+    # Delays of 0, 150, 299 and 300 s on DPB's trips; a regional bus 15 min late doesn't count.
+    lg.log_stop_events(ts, [passed("a", 0, 0), passed("a", 1, 150), passed("b", 0, 299), passed("b", 1, 300),
+                            passed("idsbk:1", 0, 900)])
+    lg.compact_finished(now=ts + timedelta(hours=3))
+
+    assert day_curves(tmp_path, date(2027, 10, 31)) == {"delayed": {22 * 6: 0.75}, "late": {22 * 6: 0.25}}
 
 
 def test_vehicle_on_a_branch_is_on_route_but_gets_no_gaps(tmp_path):
