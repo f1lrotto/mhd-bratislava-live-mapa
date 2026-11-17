@@ -34,7 +34,10 @@
   /** Live vehicles of the drawn option's rides; everything else dims. Null outside the planner. */
   const planKeys = $derived.by(() => {
     if (app.view.kind !== 'plan' || !planOpt) return null
-    return new Set(planOpt.legs.flatMap((l) => (l.kind === 'ride' && l.vehicle ? [l.vehicle] : [])))
+    // Vehicle key -> its ride's order in the trip (the first ride's label wins where they meet).
+    const keys = new Map<string, number>()
+    planOpt.legs.forEach((l, i) => l.kind === 'ride' && l.vehicle && !keys.has(l.vehicle) && keys.set(l.vehicle, i))
+    return keys
   })
 
   // --- marker animation ------------------------------------------------------------------------
@@ -115,6 +118,7 @@
           sel,
           idle,
           mine,
+          order: planKeys?.get(v.key) ?? 0,
           z: sel ? 3 : mine ? 2 : dim ? 0 : idle ? 0.5 : 1,
         },
       })
@@ -586,13 +590,18 @@
       source: 'vehicles',
       filter: ['get', 'mine'],
       layout: {
-        'text-field': 'Tvoj spoj',
+        'text-field': 'Váš spoj',
         'text-font': ['Noto Sans Bold'],
         'text-size': 11.5,
         'text-anchor': 'bottom',
         'text-offset': [0, -1.6],
-        'text-allow-overlap': true,
+        // Each ride of the trip can have its vehicle tagged; when two are close (one waiting where
+        // the other arrives) their identical labels stacked into a doubled "Tvoj spoj". Let the
+        // tags collide with each other, the earlier ride first; the tags still don't push away
+        // other map labels.
+        'text-allow-overlap': false,
         'text-ignore-placement': true,
+        'symbol-sort-key': ['get', 'order'],
       },
       paint: { 'text-color': '#0f6b37', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
     })
