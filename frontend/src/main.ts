@@ -8,3 +8,6 @@ import './app.css'
 import App from './App.svelte'
 
 export default mount(App, { target: document.getElementById('app')! })
+
+// The service worker (built into dist/sw.js) lets the installed app open offline.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js')

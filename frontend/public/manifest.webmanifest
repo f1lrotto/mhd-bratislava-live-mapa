@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "MHD naživo · Bratislava",
+  "short_name": "MHD naživo",
+  "description": "Živá mapa vozidiel MHD v Bratislave: kde sú električky, trolejbusy a autobusy a ako ide vaša linka.",
+  "lang": "sk",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
