@@ -100,6 +100,9 @@ export interface TripStop {
   arrival: boolean
 }
 
+/** A stop the vehicle has passed: when it did, if recorded live (null when we didn't see it pass). */
+export type PassedStop = Omit<TripStop, 'predicted'> & { actual: string | null }
+
 export interface VehicleDetail {
   vehicle: LiveVehicle
   trip: null | {
@@ -113,6 +116,7 @@ export interface VehicleDetail {
     waiting: boolean
     stopCount: number
     stops: TripStop[]
+    passed: PassedStop[]
   }
   feed: Feed
 }

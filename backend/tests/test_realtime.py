@@ -239,11 +239,19 @@ def test_stop_events_are_recorded_once_per_stop_passed(tmp_path):
     ]:
         now = datetime.combine(MON_1630.date(), datetime.strptime(hhmmss, "%H:%M:%S").time(), TZ)
         p.apply([_bus("b", x, 0, y=off[0] if off else 3.0)], now)
-        events += tracker.update(lineview.derive_poll(p.snapshot, s, now).realtime)
+        rt = lineview.derive_poll(p.snapshot, s, now).realtime
+        events += tracker.update(rt)
     got = [(e["trip"], e["stop"], e["actual"].astimezone(TZ).strftime("%H:%M:%S"), e["delay_s"], e["final"])
            for e in events]
     assert got == [("t990", "M", "16:39:23", -37, False), ("t990", "B", "16:48:26", -94, True)]
     assert {e["service_date"] for e in events} == {MON_1630.date()}
+    # The vehicle's trip lists the stops behind it with when it passed them, kept across the poll it
+    # dropped out; it appeared after leaving A, so A has only its scheduled time.
+    passed = rt.vehicle_trip("b", now, tracker.passed_at(rt, "b"))["passed"]
+    assert [(st["stopId"], st["scheduled"][11:19], st["actual"] and st["actual"][11:19]) for st in passed] == [
+        ("A", "16:30:00", None),
+        ("M", "16:40:00", "16:39:23"),
+    ]
 
 
 def test_service_days_start_at_noon_minus_12_hours_on_dst_days():

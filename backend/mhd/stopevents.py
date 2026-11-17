@@ -31,6 +31,17 @@ class StopEventTracker:
     def __init__(self) -> None:
         # vehicle key -> (trip id, trip start as a Unix time, poll time, along, next stop, arrived)
         self._last: dict[str, tuple[str, float, float, float, int, bool]] = {}
+        # vehicle key -> (trip id, trip start, {stop index: Unix time it passed}) for its current trip
+        self._passed: dict[str, tuple[str, float, dict[int, float]]] = {}
+
+    def passed_at(self, rt: Realtime, key: str) -> dict[int, float]:
+        """When the vehicle passed each stop of the trip `rt` assigns it, as far as recorded live."""
+        a = rt.assigned.get(key)
+        p = self._passed.get(key)
+        if a is None or p is None or rt.base is None:
+            return {}
+        trip = rt.timetable.trips[a.trip]
+        return p[2] if (p[0], p[1]) == (trip.id, rt.base.timestamp() + a.offset + trip.t[0]) else {}
 
     def update(self, rt: Realtime) -> list[dict]:
         tt = rt.timetable
@@ -41,6 +52,7 @@ class StopEventTracker:
         local_day = (rt.base + timedelta(hours=12)).date()  # rt.base is in UTC
         out: list[dict] = []
         last: dict[str, tuple[str, float, float, float, int, bool]] = {}
+        passed: dict[str, tuple[str, float, dict[int, float]]] = {}
         for key, a in rt.assigned.items():
             trip = tt.trips[a.trip]
             pattern = tt.patterns[trip.pattern]
@@ -52,6 +64,9 @@ class StopEventTracker:
             next_stop = a.next_stop
             arrive_at = min(dist[-1], max(dist[-1] - ARRIVE_M, dist[-2] + PASSED_M)) if end else dist[-1]
             arrived = not a.waiting and a.along >= arrive_at
+            p = self._passed.get(key)
+            times = p[2] if p is not None and (p[0], p[1]) == (trip.id, start) else {}
+            passed[key] = (trip.id, start, times)
             prev = self._last.get(key)
             if prev is not None and prev[2] == now:  # a failed poll re-derived the same snapshot
                 last[key] = prev
@@ -70,6 +85,7 @@ class StopEventTracker:
                     for k, at in events:
                         sched = base + a.offset + trip.t[k]
                         actual = _cross(t0, a0, now, a.along, at)
+                        times[k] = actual
                         out.append(
                             {
                                 "ts": rt.now,
@@ -91,5 +107,8 @@ class StopEventTracker:
         for key, prev in self._last.items():
             if key not in last and now - prev[2] <= MAX_GAP_S:
                 last[key] = prev
+                if key in self._passed:
+                    passed[key] = self._passed[key]
         self._last = last
+        self._passed = passed
         return out

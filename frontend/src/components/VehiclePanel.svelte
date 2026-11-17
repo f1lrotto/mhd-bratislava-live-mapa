@@ -10,6 +10,7 @@
 
   let detail = $state.raw<VehicleDetail | null>(null)
   let allStops = $state(false)
+  let showPassed = $state(false)
   $effect(() => {
     const k = key
     detail = null
@@ -93,6 +94,36 @@
     {/if}
 
     {#if trip}
+      {#if trip.passed.length}
+        <button class="section passed-toggle" onclick={() => (showPassed = !showPassed)} aria-expanded={showPassed}>
+          Prejdené zastávky ({trip.passed.length}) <span aria-hidden="true">{showPassed ? '▴' : '▾'}</span>
+        </button>
+        {#if showPassed}
+          <ol class="stops passed">
+            {#each trip.passed as s (s.index)}
+              <li>
+                <span class="tl" aria-hidden="true"></span>
+                <span class="st-time">
+                  {#if s.actual && hm(s.actual) !== hm(s.scheduled)}
+                    <strong>{hm(s.actual)}</strong> <s class="muted small">{hm(s.scheduled)}</s>
+                  {:else if s.actual}
+                    <strong>{hm(s.actual)}</strong>
+                  {:else}
+                    <span class="muted" title="Čas prejazdu nepoznáme, podľa cestovného poriadku">{hm(s.scheduled)}</span>
+                  {/if}
+                </span>
+                {#if s.station}
+                  <button class="st-name" onclick={() => navigate({ kind: 'station', code: s.station!, stop: s.stopId })}>
+                    {s.name}{#if s.platform}<span class="muted small">&nbsp;· {s.platform}</span>{/if}
+                  </button>
+                {:else}
+                  <span class="st-name">{s.name}</span>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+        {/if}
+      {/if}
       <h3 class="section">
         {trip.waiting ? `Odchod z konečnej o ${hm(trip.start)}` : 'Ďalšie zastávky'}
       </h3>
@@ -258,6 +289,24 @@
   }
   button.st-name:hover {
     text-decoration: underline;
+  }
+  .passed-toggle {
+    display: block;
+    padding: 4px 0;
+    margin-bottom: 4px;
+  }
+  .passed-toggle:hover {
+    color: var(--text);
+  }
+  .stops.passed {
+    color: var(--muted);
+  }
+  .stops.passed .tl::after {
+    border-color: #9aa1ab;
+    background: #9aa1ab;
+  }
+  .stops.passed li:last-child .tl::before {
+    bottom: 0;
   }
   .more {
     color: var(--accent);

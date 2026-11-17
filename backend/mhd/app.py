@@ -182,7 +182,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         derived = state["derived"]
         body = {
             "vehicle": _vehicle(v, snap, derived, now),
-            "trip": derived.realtime.vehicle_trip(key, now),
+            "trip": derived.realtime.vehicle_trip(key, now, stop_events.passed_at(derived.realtime, key)),
             "feed": derive.feed_status(snap, now),
         }
         return JSONResponse(body, headers=no_store)

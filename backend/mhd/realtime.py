@@ -190,8 +190,9 @@ class Realtime:
             del d["_t"]
         return out
 
-    def vehicle_trip(self, key: str, now: datetime) -> dict | None:
-        """The vehicle's assigned trip with its remaining stops, None without one."""
+    def vehicle_trip(self, key: str, now: datetime, passed_at: dict[int, float] | None = None) -> dict | None:
+        """The vehicle's assigned trip with its remaining stops, None without one. `passed` lists the
+        stops behind it, each with when it passed it from `passed_at` (stop index -> Unix time)."""
         a = self.assigned.get(key)
         if a is None:
             return None
@@ -199,24 +200,32 @@ class Realtime:
         trip = tt.trips[a.trip]
         pat = tt.patterns[trip.pattern]
         now_s = self.now_s(now)
-        stops = []
-        for k in range(a.next_stop, len(pat.stops)):
+        base_ts = self.base.timestamp()
+        passed_at = passed_at or {}
+
+        def stop(k: int) -> dict:
             sid = pat.stops[k]
             st = self.static.stops.get(sid, {})
-            stops.append(
-                {
-                    "stopId": sid,
-                    "index": k,
-                    "name": st.get("name"),
-                    "station": st.get("station"),
-                    "platform": st.get("platform"),
-                    "lat": st.get("lat"),
-                    "lon": st.get("lon"),
-                    "scheduled": self.iso(trip.t[k] + a.offset),
-                    "predicted": self.iso(self.predicted_s(a, k, now_s)),
-                    "arrival": k == len(pat.stops) - 1,
-                }
-            )
+            return {
+                "stopId": sid,
+                "index": k,
+                "name": st.get("name"),
+                "station": st.get("station"),
+                "platform": st.get("platform"),
+                "lat": st.get("lat"),
+                "lon": st.get("lon"),
+                "scheduled": self.iso(trip.t[k] + a.offset),
+                "arrival": k == len(pat.stops) - 1,
+            }
+
+        stops = [
+            {**stop(k), "predicted": self.iso(self.predicted_s(a, k, now_s))}
+            for k in range(a.next_stop, len(pat.stops))
+        ]
+        passed = [
+            {**stop(k), "actual": self.iso(passed_at[k] - base_ts) if k in passed_at else None}
+            for k in range(a.next_stop)
+        ]
         return {
             "id": trip.id,
             "line": pat.line,
@@ -228,6 +237,7 @@ class Realtime:
             "waiting": a.waiting,
             "stopCount": len(pat.stops),
             "stops": stops,
+            "passed": passed,
         }
 
 
