@@ -32,6 +32,17 @@ CAPPED_MAX_S = 30 * 60  # …up to this delay
 CAPPED_PENALTY_S = 180
 NO_DELAY_PENALTY_S = 60
 HEADSIGN_PENALTY_S = 300  # the trip's headsign isn't the vehicle's destination
+# The feed never reports running early, and vehicles rarely run more than a minute or two ahead.
+# A vehicle further ahead of a trip than this is on an earlier trip (or waiting), not this one.
+EARLY_MAX_S = 180
+# A vehicle standing at its trip's last stop has finished it; one still running wins the trip.
+AT_END_PENALTY_S = 300
+# A vehicle keeps the trip it ran at the last poll unless another vehicle fits it this much better…
+STICKY_S = 120
+# …and takes a trip it didn't run only within this much of its reported delay. The feed's delay
+# lags, so a vehicle stuck on its trip may drift up to MAX_COST_S behind it; a vehicle that would
+# start out that far behind a trip is running another one.
+NEW_TRIP_LATE_S = 300
 POSITION_LATE_S = 120  # predict from the position when it shows this much more delay than reported
 DEPOT_NAMES = {"bojnická"}  # pull-in destinations that don't say "depo"
 
@@ -271,6 +282,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 active[(line, d)] = out
             return active[(line, d)]
 
+        prev = snap.trips
         pairs = []
         for v, m in candidates:
             for ti, off in trips_of(v.line, m.direction):
@@ -279,12 +291,15 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 if m.along < dist[0] - AT_END_M or m.along > dist[-1] + AT_END_M:
                     continue  # this trip starts later or ends earlier along the route
                 start = trip.t[0] + off
+                held = prev.get(v.key) == (trip.id, off)
                 waiting = m.along <= dist[0] + AT_END_M and now_s < start
                 if waiting:
                     cost, limit = start - now_s, WAIT_S
                 else:
                     sched = _interp(dist, trip.t, m.along) + off
                     d = v.delay_s
+                    if (d is None or d < DELAY_CAP_S) and now_s - sched < -EARLY_MAX_S:
+                        continue  # the vehicle would be running this trip far ahead of time
                     if d is None:
                         cost, limit = abs(sched - now_s), MAX_COST_NO_DELAY_S
                         cost += NO_DELAY_PENALTY_S
@@ -294,10 +309,15 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                         limit = MAX_COST_S if now_s - sched <= CAPPED_MAX_S else -1
                         cost += CAPPED_PENALTY_S
                     else:
-                        cost, limit = abs(sched - (now_s - d)), MAX_COST_S
+                        cost = abs(sched - (now_s - d))
+                        limit = MAX_COST_S if held else NEW_TRIP_LATE_S
                 if cost <= limit:
                     if trip.head != v.dest:
                         cost += HEADSIGN_PENALTY_S
+                    if not waiting and m.along >= dist[-1] - AT_END_M:
+                        cost += AT_END_PENALTY_S
+                    if held:
+                        cost -= STICKY_S
                     pairs.append((cost, v.key, ti, off, waiting))
         pairs.sort(key=lambda p: p[0])
         by_key = {v.key: (v, m) for v, m in candidates}
@@ -353,5 +373,8 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
             # A capped or missing delay with no trip to fit (a depot yard beside the route), or
             # nothing scheduled around now (after the line's last trip): not known to run.
             rt.service[v.key] = "unknown"
+    if tt is not None:
+        snap.trips.clear()
+        snap.trips.update({k: (tt.trips[a.trip].id, a.offset) for k, a in rt.assigned.items()})
     rt.elapsed_ms = (_time.perf_counter() - t0) * 1000
     return rt

@@ -49,6 +49,9 @@ class Snapshot:
     moved_at: dict[str, datetime] = field(default_factory=dict)  # last time each vehicle moved
     # Bearing of each vehicle's last move, for vehicles whose feed azimuth is unknown.
     moved_bearing: dict[str, int] = field(default_factory=dict)
+    # Trip each vehicle was assigned at the last derived poll (realtime.compute keeps it), so a
+    # vehicle keeps its trip from poll to poll instead of a neighbour taking it on a near tie.
+    trips: dict[str, tuple[str, int]] = field(default_factory=dict)
 
 
 class Poller:
@@ -88,6 +91,7 @@ class Poller:
             error=None,
             moved_at=moved_at,
             moved_bearing=bearing,
+            trips=self.snapshot.trips,
         )
 
     def restore(self, history: list[tuple[datetime, list[Vehicle]]]) -> None:

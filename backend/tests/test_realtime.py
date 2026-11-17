@@ -158,3 +158,31 @@ def test_board_keeps_a_trip_scheduled_over_an_hour_ago_while_its_vehicle_runs(tm
                                         uncertain=True, waiting=False)}
     board = rt.departures(["M"], now, horizon_s=20 * 60)
     assert ("t960", "17:40") in [(d["trip"], d["predicted"][11:16]) for d in board if d["live"]]
+
+
+def test_a_vehicle_keeps_its_trip_and_never_takes_one_it_runs_far_ahead_of(tmp_path):
+    # Tram 7503 on 17 Nov: a neighbour fitting its trip one second better took it for a poll, and
+    # 7503 fell onto the next trip, 8.5 min ahead of schedule although trams don't run early.
+    s = _static(tmp_path)
+    p = Poller(logger=None)
+    p.apply([_bus("x", 4000, 60)], MON_1630)  # the 16:20 trip, due at 4 km at 16:28
+    assert lineview.derive_poll(p.snapshot, s, MON_1630).realtime.trip_id("x") == "t980"
+    t = MON_1630 + timedelta(seconds=15)
+    # "y" appears just ahead and fits the 16:20 trip slightly better (63 s against 69 s).
+    p.apply([_bus("x", 4050, 60), _bus("y", 4100, 60)], t)
+    derived = lineview.derive_poll(p.snapshot, s, t)
+    rt = derived.realtime
+    assert rt.trip_id("x") == "t980"
+    # Nothing else fits "y": the 16:30 trip is 8 min behind it, the 16:10 trip 11 min ahead.
+    assert rt.trip_id("y") is None and derived.service("y") == "running"
+
+
+def test_a_vehicle_still_running_wins_the_trip_over_one_standing_at_its_end(tmp_path):
+    s = _static(tmp_path)
+    p = Poller(logger=None)
+    # 16:30: the 16:10 trip is due at B now. "done" stands at B (it finished the previous trip);
+    # "runner" is 600 m short of B, a minute late: it runs the 16:10 trip.
+    p.apply([_bus("done", 10_000, 0), _bus("runner", 9400, 60)], MON_1630)
+    rt = lineview.derive_poll(p.snapshot, s, MON_1630).realtime
+    assert rt.trip_id("runner") == "t970"
+    assert rt.trip_id("done") != "t970"
