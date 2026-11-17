@@ -69,12 +69,13 @@ export function planQuery(from: string | null, to: string | null, at: string | n
   return `/api/plan?${q}`
 }
 
-/** Fetch a plan into app.plan; the previous result stays on screen while the same query refreshes. */
-export async function refreshPlan(query: string): Promise<void> {
+/** Fetch a plan into app.plan; the previous result stays on screen while the same query refreshes.
+ * track: the open option's rides (rideSig), kept in the result after it left or lost a connection. */
+export async function refreshPlan(query: string, track?: string | null): Promise<void> {
   const same = app.plan?.query === query
   app.plan = { query, data: same ? (app.plan?.data ?? null) : null, error: null, loading: true }
   try {
-    const data = await getJson<Plan>(query)
+    const data = await getJson<Plan>(track ? `${query}&track=${encodeURIComponent(track)}` : query)
     if (app.plan?.query === query) app.plan = { query, data, error: null, loading: false }
   } catch (e) {
     if (app.plan?.query === query)

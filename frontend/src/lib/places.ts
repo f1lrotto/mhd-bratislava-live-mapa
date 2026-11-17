@@ -48,7 +48,8 @@ export function setPlanEnd(end: 'from' | 'to', value: string, name?: string): vo
   navigate({ ...v, [end]: value, opt: null }, { replace: true })
 }
 
-/** First ride's trip: identifies an option across refreshes of the plan. */
-export function firstTrip(o: PlanOption | undefined): string | null {
-  return o?.legs.find((l) => l.kind === 'ride')?.trip ?? null
+/** The option's rides as "trip~from~to,…": identifies it across refreshes, and the planner's track parameter. */
+export function rideSig(o: PlanOption | undefined): string | null {
+  const rides = o?.legs.flatMap((l) => (l.kind === 'ride' ? [`${l.trip}~${l.from.stop}~${l.to.stop}`] : [])) ?? []
+  return rides.length ? rides.join(',') : null
 }

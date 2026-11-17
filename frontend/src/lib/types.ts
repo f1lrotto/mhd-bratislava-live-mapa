@@ -151,6 +151,8 @@ export interface RideLeg {
   start: string
   end: string
   delay: number | null
+  /** The change onto this ride from the one before it (null on the first ride). */
+  transfer: Transfer | null
   stops: { stop: string; name: string; lat: number; lon: number; time: string }[]
   coords: [number, number][]
 }
@@ -162,6 +164,21 @@ export interface PlanOption {
   transfers: number
   walkM: number
   legs: (WalkLeg | RideLeg)[]
+  /** The open option, kept (first) after it left or lost a connection. */
+  tracked?: boolean
+}
+
+/** Seconds to spare at a change with current delays: "missed" below zero, "tight" when the ride
+ * before it is late and little is left; for both, the earliest way on if the change fails. */
+export interface Transfer {
+  margin: number
+  status: 'ok' | 'tight' | 'missed'
+  fallback: FallbackOption | null
+}
+
+/** A fallback option: legs without their geometry and stop lists. */
+export type FallbackOption = Omit<PlanOption, 'legs'> & {
+  legs: (Omit<WalkLeg, 'coords'> | Omit<RideLeg, 'coords' | 'stops' | 'transfer'>)[]
 }
 
 export type PlanReason = 'same_place' | 'no_stops_near_origin' | 'no_stops_near_destination' | 'no_connection'

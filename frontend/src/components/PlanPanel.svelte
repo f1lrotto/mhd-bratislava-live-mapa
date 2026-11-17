@@ -2,9 +2,9 @@
   import { onMount, tick, untrack } from 'svelte'
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayText, durationText, fromLocalInput, hm, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
-  import { firstTrip, placeLabel, pointValue, setPlanEnd } from '../lib/places'
+  import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
-  import type { PlanOption, PlanReason, RideLeg } from '../lib/types'
+  import type { FallbackOption, PlanOption, PlanReason, RideLeg } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
   import PlaceInput from './PlaceInput.svelte'
@@ -114,11 +114,12 @@
       return
     }
     // untrack: refreshPlan reads app.plan synchronously, which must not re-run this effect.
-    return untrack(() => poll(() => refreshPlan(q), SLOW_POLL_MS))
+    // The open option is tracked, so it stays after its first ride left or a change failed.
+    return untrack(() => poll(() => refreshPlan(q, selSig), SLOW_POLL_MS))
   })
 
-  // Keep the chosen option across refreshes: the one with the same first ride, else the same index.
-  let selTrip: string | null = null
+  // Keep the chosen option across refreshes: the one with the same rides, else the same index.
+  let selSig: string | null = null
   let seen: unknown = null
   $effect(() => {
     const data = plan?.data
@@ -127,14 +128,14 @@
       const fresh = data !== seen
       seen = data
       if (!data || o == null) {
-        if (o == null) selTrip = null
+        if (o == null) selSig = null
         return
       }
-      if (fresh && selTrip) {
-        const i = data.options.findIndex((x) => firstTrip(x) === selTrip)
+      if (fresh && selSig) {
+        const i = data.options.findIndex((x) => rideSig(x) === selSig)
         if (i >= 0 && i !== o) return navigate({ kind: 'plan', from, to, at, opt: i }, { replace: true })
       }
-      selTrip = firstTrip(data.options[Math.min(o, data.options.length - 1)])
+      selSig = rideSig(data.options[Math.min(o, data.options.length - 1)])
     })
   })
 
@@ -200,10 +201,21 @@
   // Minutes between two times as displayed (HH:MM, seconds dropped), so durations add up with them.
   const minOf = (iso: string) => Math.floor(Date.parse(iso) / 60000)
   const walkMin = (s: string, e: string) => Math.max(1, minOf(e) - minOf(s))
+  // Live delays: a ride a minute or more late shows its timetable time struck through.
+  const isLate = (l: { delay: number | null }) => l.delay != null && l.delay >= 60
+  const sched = (iso: string, delay: number | null) => new Date(Date.parse(iso) - (delay ?? 0) * 1000).toISOString()
+  /** The worst change of an option with current delays. */
+  function riskOf(o: PlanOption): 'missed' | 'tight' | null {
+    const s = rides(o).map((l) => l.transfer?.status)
+    return s.includes('missed') ? 'missed' : s.includes('tight') ? 'tight' : null
+  }
+  const riskLine = (o: PlanOption) => rides(o).find((l) => l.transfer && l.transfer.status !== 'ok')?.line ?? ''
+  const prevRide = (o: PlanOption, i: number) => o.legs.slice(0, i).findLast((l): l is RideLeg => l.kind === 'ride')!
+  const spareText = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min`)
   const placeText = (p: { name: string; platform: string | null }) => p.name + (p.platform ? ` · nást. ${p.platform}` : '')
 
   function inText(iso: string): string | null {
-    if (at) return null
+    if (at || Date.parse(iso) < now - 60_000) return null // a tracked option's ride that already left
     const m = minsUntil(iso, now)
     return m < 1 ? 'teraz' : m < 60 ? `o ${m} min` : null
   }
@@ -243,12 +255,15 @@
   >
 {/snippet}
 
-{#snippet legsSummary(o: PlanOption)}
+{#snippet legsSummary(o: PlanOption | FallbackOption)}
   <span class="seq">
     {#each o.legs as l, i (i)}
       {#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
       {#if l.kind === 'ride'}
-        <LineBadge line={l.line} size="sm" />
+        <span class="ride-chip">
+          <LineBadge line={l.line} size="sm" />
+          {#if isLate(l)}<span class="late-badge" title="mešká {delayText(l.delay)}">+{Math.floor(l.delay! / 60)}<span class="sr"> min meškanie</span></span>{/if}
+        </span>
       {:else}
         <span class="walk-chip" role="img" aria-label="pešo {walkMin(l.start, l.end)} min, {l.m} m"
           >{@render walkIcon()}<span class="small" aria-hidden="true">{walkMin(l.start, l.end)} min</span></span
@@ -288,7 +303,13 @@
     <div class="sum">
       <h2 class="big" tabindex="-1" bind:this={sumEl}>{hm(sel.depart)} → {hm(sel.arrive)}</h2>
       <span class="muted">{durationText(sel.duration)} · {rides(sel).length ? transfersText(sel.transfers) : 'len pešo'}{sel.walkM ? ` · ${sel.walkM} m pešo` : ''}</span>
+      {#if sel.tracked}<span class="muted small">Sledujeme tento spoj naživo, aj keď už nie je medzi novými možnosťami.</span>{/if}
     </div>
+    {#if riskOf(sel)}
+      <p class="risk-note" class:missed={riskOf(sel) === 'missed'}>
+        {riskOf(sel) === 'missed' ? `Prestup na ${riskLine(sel)} nestihnete` : `Prestup na ${riskLine(sel)} je ohrozený meškaním`} – ďalšie spojenie nájdete pri prestupe.
+      </p>
+    {/if}
 
     <ol class="timeline">
       {#each sel.legs as l, i (i)}
@@ -310,7 +331,10 @@
           {@const transfer = sel.legs.slice(0, i).some((x) => x.kind === 'ride')}
           {@const mid = l.stops.slice(1, -1)}
           <li class="leg ride-leg" style:--c={l.color}>
-            <span class="t"><strong>{hm(l.start)}</strong></span>
+            <span class="t">
+              <strong class:late={isLate(l)}>{hm(l.start)}</strong>
+              {#if isLate(l)}<s class="sched"><span class="sr">podľa cestovného poriadku </span>{hm(sched(l.start, l.delay))}</s>{/if}
+            </span>
             <span class="rail" aria-hidden="true"><span class="dot" class:ring={transfer} class:origin={i === 0}></span></span>
             <div class="leg-body">
               <div class="stop-name">
@@ -322,8 +346,31 @@
               </div>
               {#if i > 0 && (sel.legs[i - 1].kind === 'ride' || waitMin(sel, i) > 0)}
                 <span class="muted small">
-                  {#if sel.legs[i - 1].kind === 'ride'}príchod {hm(sel.legs[i - 1].end)}{' · '}{/if}čakanie {waitMin(sel, i)} min
+                  {#if sel.legs[i - 1].kind === 'ride'}príchod {hm(sel.legs[i - 1].end)}{/if}
+                  {#if l.transfer?.status !== 'missed'}{sel.legs[i - 1].kind === 'ride' ? ' · ' : ''}čakanie {waitMin(sel, i)} min{/if}
                 </span>
+              {/if}
+              {#if l.transfer && l.transfer.status !== 'ok'}
+                {@const prev = prevRide(sel, i)}
+                {@const missed = l.transfer.status === 'missed'}
+                {@const fb = l.transfer.fallback}
+                <div class="risk-box" class:missed>
+                  <strong>{missed ? `Prestup na ${l.line} nestihnete` : `Prestup na ${l.line} je ohrozený`}</strong>
+                  <span>
+                    {prev.line}{isLate(prev) ? ` mešká ${delayText(prev.delay)} a` : ''}
+                    {missed ? `príde o ${hm(prev.end)}, ${l.line} odchádza o ${hm(l.start)}.` : `na prestup zostáva ${spareText(l.transfer.margin)}.`}
+                  </span>
+                  {#if fb}
+                    <span class="fb-label">{missed ? 'Ďalšie spojenie do cieľa' : 'Ak ho nestihnete, ďalšie spojenie'}:</span>
+                    <span class="fb">
+                      {@render legsSummary(fb)}
+                      <span><strong class="fb-times">{hm(fb.depart)} → {hm(fb.arrive)}</strong>
+                        {#if minOf(fb.arrive) > minOf(sel.arrive)}<span class="muted small">· v cieli o {minOf(fb.arrive) - minOf(sel.arrive)} min neskôr</span>{/if}</span>
+                    </span>
+                  {:else}
+                    <span class="muted small">Iné spojenie do cieľa sme nenašli.</span>
+                  {/if}
+                </div>
               {/if}
               <div class="ride">
                 <LineBadge line={l.line} />
@@ -353,7 +400,10 @@
           </li>
           {#if sel.legs[i + 1]?.kind !== 'ride'}
             <li class="leg alight" style:--c={l.color}>
-              <span class="t"><strong>{hm(l.end)}</strong></span>
+              <span class="t">
+                <strong class:late={isLate(l)}>{hm(l.end)}</strong>
+                {#if isLate(l)}<s class="sched"><span class="sr">podľa cestovného poriadku </span>{hm(sched(l.end, l.delay))}</s>{/if}
+              </span>
               <span class="rail end" aria-hidden="true"><span class="dot" class:flag={i === sel.legs.length - 1} class:ring={i !== sel.legs.length - 1}></span></span>
               <div class="leg-body">
                 <div class="stop-name">
@@ -453,7 +503,13 @@
               </span>
               {@render legsSummary(o)}
               <span class="card-meta muted small">
-                {#if isLive(o)}<span class="live"><span class="live-dot" aria-hidden="true"></span>naživo</span>{/if}
+                {#if o.tracked}<span class="live"><span class="live-dot" aria-hidden="true"></span>sledovaný spoj</span>
+                {:else if isLive(o)}<span class="live"><span class="live-dot" aria-hidden="true"></span>naživo</span>{/if}
+                {#if riskOf(o)}
+                  <span class="risk-tag" class:missed={riskOf(o) === 'missed'}>
+                    {riskOf(o) === 'missed' ? `prestup na ${riskLine(o)} nestihnete` : `prestup na ${riskLine(o)} ohrozený`}
+                  </span>
+                {/if}
                 {#if first && inText(first.start)}<span class="soon">{first.line} {inText(first.start)}</span>{/if}
                 <span>{rides(o).length ? transfersText(o.transfers) : 'len pešo'}</span>
                 {#if o.walkM}<span>{o.walkM} m pešo</span>{/if}
@@ -662,6 +718,83 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     flex: none;
+  }
+  .ride-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+  }
+  .late-badge {
+    color: var(--bad-text);
+    font-weight: 700;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .risk-tag {
+    color: var(--warn-text);
+    font-weight: 600;
+  }
+  .risk-tag.missed {
+    color: var(--bad-text);
+  }
+  .risk-tag::before {
+    content: '⚠ ';
+  }
+  .risk-note {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: var(--warn-bg);
+    color: var(--warn-text);
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .risk-note.missed {
+    background: var(--bad-bg);
+    color: var(--bad-text);
+  }
+  .risk-box {
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 2px 0 4px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    border-left: 4px solid var(--warn);
+    background: var(--warn-bg);
+    font-size: 0.88rem;
+  }
+  .risk-box > strong {
+    color: var(--warn-text);
+  }
+  .risk-box.missed {
+    border-left-color: var(--bad);
+    background: var(--bad-bg);
+  }
+  .risk-box.missed > strong {
+    color: var(--bad-text);
+  }
+  .fb-label {
+    margin-top: 2px;
+    font-weight: 600;
+  }
+  .fb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+  }
+  .fb-times {
+    font-variant-numeric: tabular-nums;
+  }
+  .t .late {
+    color: var(--bad-text);
+  }
+  .sched {
+    display: block;
+    color: var(--muted);
+    font-size: 0.8rem;
   }
   .card-meta {
     display: flex;

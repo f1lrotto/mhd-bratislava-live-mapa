@@ -273,3 +273,34 @@ def test_api_plan_takes_a_naive_time_as_bratislava_and_gives_a_reason(tmp_path, 
         assert body["live"] is False  # a past time doesn't get today's delays
         assert c.get("/api/plan", params={"from": "1", "to": "1"}).json() == {
             "options": [], "reason": "same_place", "live": True}
+
+
+def test_late_feeder_puts_the_transfer_at_risk_and_tracking_shows_it_missed(tmp_path):
+    # Line 1 A → B 08:00–08:10; line 2 from the same stop B at 08:14 (c1) or 08:30 (c2).
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "C": (10_000, 0, "3")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["B", "C"]}}, [
+        ("in", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("c1", "2", "0", "work", [hms(8, 14), hms(8, 24)]),
+        ("c2", "2", "0", "work", [hms(8, 30), hms(8, 40)]),
+    ])
+    o, d = {"station": "1"}, {"station": "3"}
+    on_time = rides(p.plan(o, d, at(7, 55), delays={"in": 0})[0])[1]["transfer"]
+    assert on_time == {"margin": 210, "status": "ok", "fallback": None}  # 4 min less the 30 s change
+
+    # 2 min late: arrives 08:12, 90 s to spare → at risk, and c2 is the way on if c1 is missed.
+    tr = rides(p.plan(o, d, at(7, 55), delays={"in": 120})[0])[1]["transfer"]
+    assert tr["margin"] == 90 and tr["status"] == "tight"
+    fb = tr["fallback"]
+    assert [leg["trip"] for leg in fb["legs"] if leg["kind"] == "ride"] == ["c2"]
+    assert fb["depart"] == iso(8, 30) and fb["arrive"] == iso(8, 40)
+    assert "coords" not in fb["legs"][0]
+
+    # 5 min late: planning again takes c2; the open option with c1 is tracked as missed.
+    late = {"in": 300}
+    assert [r["trip"] for r in rides(p.plan(o, d, at(8, 1), delays=late)[0])] == ["in", "c2"]
+    it = p.track(o, d, [("in", "A", "B"), ("c1", "B", "C")], at(8, 1), delays=late)
+    ride_in, ride_c1 = rides(it)
+    assert ride_in["delay"] == 300 and ride_in["end"] == iso(8, 15) and ride_c1["start"] == iso(8, 14)
+    assert ride_c1["transfer"]["status"] == "missed" and ride_c1["transfer"]["margin"] == -90
+    assert ride_c1["transfer"]["fallback"]["arrive"] == iso(8, 40)
+    assert p.track(o, d, [("nope", "A", "B")], at(8, 1)) is None

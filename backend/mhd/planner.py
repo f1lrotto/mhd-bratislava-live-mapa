@@ -39,6 +39,8 @@ TRANSFER_SLACK_S = 120  # an extra transfer must save more than this to be offer
 SAME_PLACE_M = 30.0  # origin and destination this close: nothing to plan
 WALK_OFFER_M = 1200.0  # a walk this long is offered next to rides …
 WALK_OFFER_SLOWER_S = 300  # … arriving up to this much later than the first of them
+RISK_LATE_S = 60  # a transfer is at risk when the ride before it runs at least this late …
+RISK_MARGIN_S = 180  # … and leaves less than this to spare (delays tend to grow)
 INF = math.inf
 
 
@@ -49,6 +51,16 @@ def walk_seconds(dist_m: float) -> int:
 def _service_midnight(d: date) -> datetime:
     """Service day origin (noon minus 12 h) in UTC."""
     return datetime(d.year, d.month, d.day, 12, tzinfo=TZ).astimezone(UTC) - timedelta(hours=12)
+
+
+def transfer_status(margin: float, feeder_delay: int | None) -> str:
+    """"missed" when the change can't be made, "tight" when the ride before it is late and little
+    time is left to spare, else "ok"."""
+    if margin < 0:
+        return "missed"
+    if feeder_delay is not None and feeder_delay >= RISK_LATE_S and margin < RISK_MARGIN_S:
+        return "tight"
+    return "ok"
 
 
 class _Day:
@@ -427,6 +439,7 @@ class Planner:
                access_m: dict, delays: dict[tuple[int, int], int]) -> dict:
         legs: list[dict] = []
         t = None  # time at the end of the previous leg
+        prev_ride: tuple[float, int | None] | None = None  # (arrival, live delay) of the last ride
         pending_walk: list[tuple] = []  # walk steps before the next ride: (from P, to P, w, m)
 
         def walk_leg(frm, to, start, end, m, via=None):
@@ -472,6 +485,13 @@ class Planner:
                 _, p, j, bpos, apos, d = st
                 cols = day.cols[p]
                 bt, at = cols[bpos][j] + d, cols[apos][j] + d
+                live_d = d if (p, j) in delays else None
+                transfer = None
+                if prev_ride is not None:
+                    # Time to spare: the change walk (or the same-stop change) against the departure.
+                    need = sum(x[2] for x in pending_walk) if pending_walk else SAME_STOP_CHANGE_S
+                    margin = int(bt - prev_ride[0] - need)
+                    transfer = {"margin": margin, "status": transfer_status(margin, prev_ride[1]), "fallback": None}
                 flush(bt)
                 ti = day.trips[p][j]
                 tid, _, _, head, _ = self.trips[ti]
@@ -482,13 +502,14 @@ class Planner:
                     "kind": "ride", "line": line, "type": info.get("type"), "color": info.get("color"),
                     "textColor": info.get("textColor"), "dir": self.pat_dir[p], "headsign": head, "trip": tid,
                     "from": self._stop_point(stops[bpos]), "to": self._stop_point(stops[apos]),
-                    "start": self._iso(day, bt), "end": self._iso(day, at), "delay": d if (p, j) in delays else None,
+                    "start": self._iso(day, bt), "end": self._iso(day, at), "delay": live_d, "transfer": transfer,
                     "stops": [{"stop": self.stop_ids[stops[i]], "name": self.stops_raw[self.stop_ids[stops[i]]].get("name"),
                                "lat": self.stop_ll[stops[i]][1], "lon": self.stop_ll[stops[i]][0],
                                "time": self._iso(day, cols[i][j] + d)} for i in range(bpos, apos + 1)],
                     "coords": self._ride_coords(p, bpos, apos),
                 })
                 t = at
+                prev_ride = (at, live_d)
         # Egress to the destination.
         last = legs[-1]["to"] if legs else o_pt
         if egress_m and last.get("stop") is not None:
@@ -551,7 +572,117 @@ class Planner:
         for it in results:
             it.pop("depart_t", None)
             it.pop("arrive_t", None)
-        return results[:max_results], (None if results else reason)
+        results = results[:max_results]
+        for it in results:
+            self._add_fallbacks(it, d_pt, d_plats, delays)
+        return results, (None if results else reason)
+
+    def track(self, origin: dict, dest: dict, rides: list[tuple[str, str, str]], now: datetime,
+              delays: dict[str, int] | None = None) -> dict | None:
+        """An itinerary given by its rides (trip id, boarding stop, alighting stop), rebuilt for the
+        trip instances running around now with current delays, so a transfer it no longer makes
+        shows as "missed" with a fallback. None when a ride can't be found."""
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=TZ)
+        o_pt, o_plats = self._place(origin)
+        d_pt, d_plats = self._place(dest)
+        day = self._day(now.astimezone(TZ).date())
+        t0 = int(math.floor((now.astimezone(UTC) - day.base).total_seconds()))
+        dl = self._instance_delays(day, t0, delays)
+        steps: list[tuple] = []
+        access_m: dict[int, float] = {}
+        egress_m: dict[int, float] = {}
+        t_ref, prev_a = t0, None
+        for tid, fs, ts in rides:
+            b, a = self.stop_idx.get(fs), self.stop_idx.get(ts)
+            if b is None or a is None:
+                return None
+            best = None
+            for p, j, _, _ in day.instances.get(tid, ()):
+                stops = self.pat_stops[p]
+                if b not in stops or a not in stops[stops.index(b) + 1:]:
+                    continue
+                bpos = stops.index(b)
+                apos = stops.index(a, bpos + 1)
+                gap = abs(day.cols[p][bpos][j] - t_ref)
+                if best is None or gap < best[0]:
+                    best = (gap, p, j, bpos, apos)
+            if best is None or best[0] > 6 * 3600:
+                return None
+            _, p, j, bpos, apos = best
+            if prev_a is None:
+                if o_plats is None:
+                    access_m[b] = self._dist_pt(b, o_pt)
+                    steps.append(("access", None, b, walk_seconds(access_m[b])))
+                elif b in o_plats:
+                    steps.append(("access", None, b, 0))
+                else:
+                    via = min(o_plats, key=lambda q: self._dist(q, b))
+                    steps.append(("access", via, b, self._walk_w(via, b)))
+            elif prev_a != b:
+                steps.append(("walk", prev_a, b, self._walk_w(prev_a, b)))
+            steps.append(("ride", p, j, bpos, apos, dl.get((p, j), 0)))
+            t_ref, prev_a = day.cols[p][apos][j], a
+        if prev_a is None:
+            return None
+        if d_plats is None:
+            egress_m[prev_a] = self._dist_pt(prev_a, d_pt)
+        elif prev_a not in d_plats:
+            q = min(d_plats, key=lambda q: self._dist(prev_a, q))
+            steps.append(("walk", prev_a, q, self._walk_w(prev_a, q)))
+        it = self._build(day, steps, o_pt, d_pt, egress_m, access_m, dl)
+        self._add_fallbacks(it, d_pt, d_plats, delays)
+        return it
+
+    def _add_fallbacks(self, it: dict, d_pt: dict, d_plats: list[int] | None, delays: dict[str, int] | None) -> None:
+        """For each transfer at risk or missed: the earliest way on from the stop where the ride
+        before it arrives, once the connecting ride has left (or on arrival, if that is later)."""
+        prev = None
+        for leg in it["legs"]:
+            if leg["kind"] != "ride":
+                continue
+            tr = leg.get("transfer")
+            if prev is not None and tr and tr["status"] != "ok":
+                s = self.stop_idx[prev["to"]["stop"]]
+                start = max(datetime.fromisoformat(prev["end"]),
+                            datetime.fromisoformat(leg["start"]) + timedelta(seconds=1))
+                res, _ = self._rides(self._stop_point(s), [s], d_pt, d_plats, start, delays, 1)
+                if res:
+                    best = min(res, key=lambda x: (x["arrive_t"], x["transfers"]))
+                    fb = {k: v for k, v in best.items() if k not in ("depart_t", "arrive_t")}
+                    fb["legs"] = [{k: v for k, v in lg.items() if k not in ("coords", "stops", "transfer")}
+                                  for lg in fb["legs"]]
+                    tr["fallback"] = fb
+            prev = leg
+
+    def _dist(self, a: int, b: int) -> float:
+        return math.hypot(self.stop_xy[a][0] - self.stop_xy[b][0], self.stop_xy[a][1] - self.stop_xy[b][1])
+
+    def _dist_pt(self, s: int, pt: dict) -> float:
+        x, y = to_xy(pt["lon"], pt["lat"])
+        return math.hypot(self.stop_xy[s][0] - x, self.stop_xy[s][1] - y)
+
+    def _walk_w(self, a: int, b: int) -> int:
+        """The transfer walk the search uses between two stops (or a plain walk when farther)."""
+        for nb, w in self.foot[a]:
+            if nb == b:
+                return w
+        return walk_seconds(self._dist(a, b))
+
+    @staticmethod
+    def _instance_delays(day: _Day, t0: int, delays: dict[str, int] | None) -> dict[tuple[int, int], int]:
+        """Delays of the trip instances running around t0, by (pattern, pattern trip)."""
+        dl: dict[tuple[int, int], int] = {}
+        for tid, d in (delays or {}).items():
+            if d is None:
+                continue
+            inst = day.instances.get(tid)
+            if not inst:
+                continue
+            gap, p, j = min((max(0, first - t0, t0 - last), p, j) for p, j, first, last in inst)
+            if gap <= 3 * 3600:
+                dl[(p, j)] = int(d)
+        return dl
 
     def _rides(self, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
                depart: datetime, delays: dict[str, int] | None, max_results: int) -> tuple[list[dict], str | None]:
@@ -582,17 +713,7 @@ class Planner:
             for s, (w, dist) in self._near(d_pt["lon"], d_pt["lat"]).items():
                 egress[s], egress_m[s] = w, dist
 
-        # Delays of the trip instance running around the departure time.
-        dl: dict[tuple[int, int], int] = {}
-        for tid, d in (delays or {}).items():
-            if d is None:
-                continue
-            inst = day.instances.get(tid)
-            if not inst:
-                continue
-            gap, p, j = min((max(0, first - t0, t0 - last), p, j) for p, j, first, last in inst)
-            if gap <= 3 * 3600:
-                dl[(p, j)] = int(d)
+        dl = self._instance_delays(day, t0, delays)
         mind = min([0, *dl.values()])
 
         def search(t: float) -> list[dict]:

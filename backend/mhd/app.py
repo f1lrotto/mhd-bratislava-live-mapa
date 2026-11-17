@@ -198,7 +198,10 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         at: str | None = None,
         fromName: str | None = None,
         toName: str | None = None,
+        track: str | None = None,
     ):
+        """track: the open option's rides as "trip~from stop~to stop" joined by commas. While
+        departing now, it stays in the options (first) after it has left or lost a connection."""
         p = current_planner()
         if p is None:
             return JSONResponse({"error": "static data not built"}, status_code=503)
@@ -217,6 +220,20 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             options, reason = p.plan_with_reason(o, d, depart, delays=rt.trip_delays() if live else None)
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
+        if live and track:
+            try:
+                sig = [tuple(r.split("~")) for r in track.split(",")]
+                if any(len(r) != 3 for r in sig):
+                    raise ValueError
+            except ValueError:
+                return JSONResponse({"error": "bad track"}, status_code=400)
+            known = {tuple((leg["trip"], leg["from"]["stop"], leg["to"]["stop"]) for leg in it["legs"]
+                           if leg["kind"] == "ride") for it in options}
+            if tuple(sig) not in known:
+                tracked = p.track(o, d, sig, now, delays=rt.trip_delays())
+                if tracked is not None:
+                    options.insert(0, {**tracked, "tracked": True})
+                    reason = None
         vehicles = rt.trip_vehicle() if live else {}
         for it in options:
             for leg in it["legs"]:
