@@ -214,6 +214,38 @@
     ;(map.getSource('plan-ends') as GeoJSONSource).setData({ type: 'FeatureCollection', features: ends })
   }
 
+  /** The rest of a vehicle's way to the boarding stop: the approach cut where the vehicle is now. */
+  function ahead(line: LonLat[], v: LonLat): LonLat[] | null {
+    const k = Math.cos((v[1] * Math.PI) / 180)
+    let best = { d: Infinity, i: 0, p: line[0] }
+    for (let i = 0; i < line.length - 1; i++) {
+      const [a, b] = [line[i], line[i + 1]]
+      const dx = (b[0] - a[0]) * k, dy = b[1] - a[1]
+      const len = dx * dx + dy * dy
+      const t = len ? Math.max(0, Math.min(1, (((v[0] - a[0]) * k) * dx + (v[1] - a[1]) * dy) / len)) : 0
+      const p: LonLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+      const d = metres(p, v)
+      if (d < best.d) best = { d, i, p }
+    }
+    // Off its way (e.g. still at the depot or on its previous trip): no line rather than a wrong one.
+    if (best.d > 400) return null
+    const rest = [v, best.p, ...line.slice(best.i + 1)]
+    return rest.length >= 2 && metres(rest[0], rest.at(-1)!) > 30 ? rest : null
+  }
+
+  function updateApproach(): void {
+    if (!map) return
+    const byKey = new Map((app.live?.vehicles ?? []).map((x) => [x.key, x]))
+    const features = []
+    for (const l of app.view.kind === 'plan' ? (planOpt?.legs ?? []) : []) {
+      if (l.kind !== 'ride' || !l.vehicle || !l.approach) continue
+      const v = byKey.get(l.vehicle)
+      const rest = v && ahead(l.approach, [v.lon, v.lat])
+      if (rest) features.push({ type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: rest }, properties: { color: l.color } })
+    }
+    ;(map.getSource('plan-approach') as GeoJSONSource).setData({ type: 'FeatureCollection', features })
+  }
+
   // --- route overlay ----------------------------------------------------------------------------
   function updateRoute(lv: LineView | null): void {
     if (!map) return
@@ -270,7 +302,7 @@
   function setup(m: MlMap): void {
     addMarkerImages(m)
     addPinImages(m)
-    for (const id of ['stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-stops', 'plan-ends', 'vehicles'])
+    for (const id of ['stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles'])
       m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
@@ -298,6 +330,32 @@
           'line-color': ['get', 'color'],
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4.5, 15, 9],
           'line-opacity': ['case', ['get', 'sel'], 1, 0.35],
+        },
+      },
+      firstLabel,
+    )
+    // Where the user's vehicle still has to come from: faint and dashed, under the trip itself.
+    m.addLayer(
+      {
+        id: 'plan-approach-casing',
+        type: 'line',
+        source: 'plan-approach',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#ffffff', 'line-opacity': 0.85, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 15, 10] },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'plan-approach',
+        type: 'line',
+        source: 'plan-approach',
+        layout: { 'line-join': 'round', 'line-cap': 'butt' },
+        paint: {
+          'line-color': ['get', 'color'],
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3, 15, 5],
+          'line-opacity': 0.7,
+          'line-dasharray': [2, 1.5],
         },
       },
       firstLabel,
@@ -784,6 +842,12 @@
     })
   })
 
+
+  // The approach follows each live poll.
+  $effect(() => {
+    void [planOpt, app.live, app.view]
+    if (loaded) untrack(updateApproach)
+  })
 
   let fitted: string | null = null
   $effect(() => {

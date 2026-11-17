@@ -151,6 +151,8 @@ export interface RideLeg {
   start: string
   end: string
   delay: number | null
+  /** Live: the vehicle's way from the stop behind it to the boarding stop (null once it passed it). */
+  approach?: [number, number][] | null
   /** The change onto this ride from the one before it (null on the first ride). */
   transfer: Transfer | null
   stops: { stop: string; name: string; lat: number; lon: number; time: string }[]
@@ -178,7 +180,7 @@ export interface Transfer {
 
 /** A fallback option: legs without their geometry and stop lists. */
 export type FallbackOption = Omit<PlanOption, 'legs'> & {
-  legs: (Omit<WalkLeg, 'coords'> | Omit<RideLeg, 'coords' | 'stops' | 'transfer'>)[]
+  legs: (Omit<WalkLeg, 'coords'> | Omit<RideLeg, 'coords' | 'stops' | 'transfer' | 'approach'>)[]
 }
 
 export type PlanReason = 'same_place' | 'no_stops_near_origin' | 'no_stops_near_destination' | 'no_connection'

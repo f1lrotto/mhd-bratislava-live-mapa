@@ -235,10 +235,14 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
                     options.insert(0, {**tracked, "tracked": True})
                     reason = None
         vehicles = rt.trip_vehicle() if live else {}
+        nexts = rt.trip_next_stop() if live else {}
         for it in options:
             for leg in it["legs"]:
                 if leg["kind"] == "ride":
                     leg["vehicle"] = vehicles.get(leg["trip"])
+                    # The vehicle's way to the boarding stop, for the map.
+                    k = nexts.get(leg["trip"]) if leg["vehicle"] else None
+                    leg["approach"] = None if k is None else p.approach(leg["trip"], leg["from"]["stop"], k)
         return JSONResponse({"options": options, "reason": reason, "live": live}, headers=no_store)
 
     @app.get("/api/line/{line}")

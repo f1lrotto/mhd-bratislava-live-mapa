@@ -132,6 +132,7 @@ class Planner:
             self.pat_stops.append([self.stop_idx[s] for s in pat["stops"]])
         # (trip id, pattern, service, headsign, times)
         self.trips = [(t["id"], t["p"], t["svc"], t.get("head"), tuple(t["t"])) for t in tt["trips"]]
+        self.trip_pat = {t[0]: t[1] for t in self.trips}
         del tt
 
         self.stop_pats: list[list[tuple[int, int]]] = [[] for _ in self.stop_ids]
@@ -693,6 +694,18 @@ class Planner:
             else:
                 hi = mid
         return [best]
+
+    def approach(self, trip_id: str, board_stop: str, next_stop: int) -> list[list[float]] | None:
+        """The trip's way from the stop behind its vehicle (which next reaches stop index next_stop
+        of the trip) to the boarding stop; None once the vehicle has passed it."""
+        p, b = self.trip_pat.get(trip_id), self.stop_idx.get(board_stop)
+        if p is None or b is None:
+            return None
+        stops = self.pat_stops[p]
+        bpos = next((i for i in range(max(0, next_stop), len(stops)) if stops[i] == b), None)
+        if bpos is None or bpos == 0:
+            return None
+        return self._ride_coords(p, max(0, next_stop - 1), bpos)
 
     def _dist(self, a: int, b: int) -> float:
         return math.hypot(self.stop_xy[a][0] - self.stop_xy[b][0], self.stop_xy[a][1] - self.stop_xy[b][1])

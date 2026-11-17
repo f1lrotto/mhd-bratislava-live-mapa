@@ -102,6 +102,10 @@ class Realtime:
                 out[self.timetable.trips[a.trip].id] = a.delay
         return out
 
+    def trip_next_stop(self) -> dict[str, int]:
+        """Index of the next stop of every assigned trip (0 while waiting at its first stop)."""
+        return {self.timetable.trips[a.trip].id: a.next_stop for a in self.assigned.values()}
+
     def trip_vehicle(self) -> dict[str, str]:
         """Vehicle key of every assigned trip (running, or waiting at its first stop)."""
         return dict(self.by_trip)

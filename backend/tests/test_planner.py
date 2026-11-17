@@ -357,3 +357,15 @@ def test_next_day_fallback_leaves_as_late_as_it_still_arrives_first(tmp_path):
     tue = (2026, 11, 17)
     assert [leg["trip"] for leg in fb["legs"] if leg["kind"] == "ride"] == ["morning", "on"]
     assert fb["depart"] == iso(7, 30, day=tue) and fb["arrive"] == iso(8, 15, day=tue)
+
+
+def test_approach_runs_from_the_stop_behind_the_vehicle_to_the_boarding_stop(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (1000, 0, "2"), "C": (2000, 0, "3"), "D": (3000, 0, "4")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B", "C", "D"]}},
+               [("t", "1", "0", "work", [hms(8, 0), hms(8, 2), hms(8, 4), hms(8, 6)])])
+    r = lambda pt: [round(c, 6) for c in pt]  # noqa: E731
+    # Between B and C (next stop C, index 2), boarding at D: drawn from B.
+    assert p.approach("t", "D", 2) == [r(ll(1000)), r(ll(2000)), r(ll(3000))]
+    assert p.approach("t", "C", 0) == [r(ll(0)), r(ll(1000)), r(ll(2000))]  # waiting at A
+    assert p.approach("t", "B", 3) is None  # already past B
+    assert p.approach("nope", "B", 0) is None
