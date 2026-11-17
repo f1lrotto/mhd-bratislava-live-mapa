@@ -186,3 +186,37 @@ def test_a_vehicle_still_running_wins_the_trip_over_one_standing_at_its_end(tmp_
     rt = lineview.derive_poll(p.snapshot, s, MON_1630).realtime
     assert rt.trip_id("runner") == "t970"
     assert rt.trip_id("done") != "t970"
+
+
+def test_a_vehicle_keeps_its_trip_across_local_midnight(tmp_path):
+    # At midnight a trip of the day before is no longer offset 0 but -86400 from the new service
+    # day; the vehicle running it must still hold it.
+    _static(tmp_path)
+    trips = [{"id": f"n{h}", "p": 0, "svc": "work", "head": "Východ", "t": [h, h + 600, h + 1200]}
+             for h in (84000, 84600, 85200, 85800)]  # 23:20 … 23:50, at M 10 min later
+    (tmp_path / "static" / "timetable.json").write_text(json.dumps(
+        {"patterns": [{"line": "83", "dir": "0", "stops": ["A", "M", "B"]}], "trips": trips}))
+    s = Static.load(tmp_path)
+    p = Poller(logger=None)
+    t1 = datetime(2026, 11, 16, 23, 59, 50, tzinfo=TZ)
+    p.apply([_bus("x", 4900, 0)], t1)  # the 23:50 trip, due at 4.9 km at 23:59:48
+    assert lineview.derive_poll(p.snapshot, s, t1).realtime.trip_id("x") == "n85800"
+    t2 = datetime(2026, 11, 17, 0, 0, 5, tzinfo=TZ)
+    # "y" appears just ahead and fits the 23:50 trip a few seconds better.
+    p.apply([_bus("x", 5000, 0), _bus("y", 5050, 0)], t2)
+    rt = lineview.derive_poll(p.snapshot, s, t2).realtime
+    assert rt.trip_id("x") == "n85800" and rt.trip_id("y") is None
+
+
+def test_after_a_feed_outage_a_held_trip_has_to_fit_afresh(tmp_path):
+    s = _static(tmp_path)
+    p = Poller(logger=None)
+    t1 = MON_1630 + timedelta(minutes=85)  # 17:55
+    p.apply([_bus("x", 7000, 60)], t1)  # the 17:40 trip, due at 7 km at 17:54
+    assert lineview.derive_poll(p.snapshot, s, t1).realtime.trip_id("x") == "t1060"
+    # Ten minutes without a poll. "x" now reports 1 min but sits 9 min behind the 17:40 trip; "z"
+    # runs the 17:50 trip on time. A trip held 10 min ago doesn't get the drifting allowance.
+    t2 = t1 + timedelta(minutes=10)
+    p.apply([_bus("x", 7400, 60), _bus("z", 7500, 0)], t2)
+    rt = lineview.derive_poll(p.snapshot, s, t2).realtime
+    assert rt.trip_id("z") == "t1070" and rt.trip_id("x") is None

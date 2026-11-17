@@ -43,6 +43,9 @@ STICKY_S = 120
 # lags, so a vehicle stuck on its trip may drift up to MAX_COST_S behind it; a vehicle that would
 # start out that far behind a trip is running another one.
 NEW_TRIP_LATE_S = 300
+# A held trip only counts when it was held at a recent poll: after a feed outage the vehicle may
+# have moved on to another trip, so it has to fit afresh.
+HELD_MAX_AGE_S = 60
 POSITION_LATE_S = 120  # predict from the position when it shows this much more delay than reported
 DEPOT_NAMES = {"bojnická"}  # pull-in destinations that don't say "depo"
 
@@ -282,7 +285,11 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 active[(line, d)] = out
             return active[(line, d)]
 
-        prev = snap.trips
+        # Held trips are keyed by their start as a Unix time, so they survive the change of service
+        # day at local midnight (offset 0 becomes -86400) and DST days.
+        base_ts = round(rt.base.timestamp())
+        now_ts = now.timestamp()
+        prev = {k: (tid, t0) for k, (tid, t0, at) in snap.trips.items() if now_ts - at <= HELD_MAX_AGE_S}
         pairs = []
         for v, m in candidates:
             for ti, off in trips_of(v.line, m.direction):
@@ -291,7 +298,7 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
                 if m.along < dist[0] - AT_END_M or m.along > dist[-1] + AT_END_M:
                     continue  # this trip starts later or ends earlier along the route
                 start = trip.t[0] + off
-                held = prev.get(v.key) == (trip.id, off)
+                held = prev.get(v.key) == (trip.id, base_ts + off)
                 waiting = m.along <= dist[0] + AT_END_M and now_s < start
                 if waiting:
                     cost, limit = start - now_s, WAIT_S
@@ -375,6 +382,6 @@ def compute(snap: Snapshot, static: Static | None, matches: dict, now: datetime 
             rt.service[v.key] = "unknown"
     if tt is not None:
         snap.trips.clear()
-        snap.trips.update({k: (tt.trips[a.trip].id, a.offset) for k, a in rt.assigned.items()})
+        snap.trips.update({k: (tt.trips[a.trip].id, base_ts + a.offset, now_ts) for k, a in rt.assigned.items()})
     rt.elapsed_ms = (_time.perf_counter() - t0) * 1000
     return rt

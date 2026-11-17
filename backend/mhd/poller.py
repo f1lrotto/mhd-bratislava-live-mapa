@@ -50,8 +50,9 @@ class Snapshot:
     # Bearing of each vehicle's last move, for vehicles whose feed azimuth is unknown.
     moved_bearing: dict[str, int] = field(default_factory=dict)
     # Trip each vehicle was assigned at the last derived poll (realtime.compute keeps it), so a
-    # vehicle keeps its trip from poll to poll instead of a neighbour taking it on a near tie.
-    trips: dict[str, tuple[str, int]] = field(default_factory=dict)
+    # vehicle keeps its trip from poll to poll instead of a neighbour taking it on a near tie:
+    # (trip id, its service day's midnight as a Unix time, time of that poll as a Unix time).
+    trips: dict[str, tuple[str, int, float]] = field(default_factory=dict)
 
 
 class Poller:
