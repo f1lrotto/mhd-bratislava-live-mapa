@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from . import derive, lineview
 from .history import History
 from .logger import PollLogger
-from .planner import Planner
+from .planner import MAX_RIDES, Planner
 from .poller import Poller
 from .static import TZ, Static
 
@@ -223,7 +223,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         if live and track:
             try:
                 sig = [tuple(r.split("~")) for r in track.split(",")]
-                if any(len(r) != 3 for r in sig):
+                if len(sig) > MAX_RIDES or any(len(r) != 3 for r in sig):
                     raise ValueError
             except ValueError:
                 return JSONResponse({"error": "bad track"}, status_code=400)

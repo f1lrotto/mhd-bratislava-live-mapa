@@ -304,3 +304,39 @@ def test_late_feeder_puts_the_transfer_at_risk_and_tracking_shows_it_missed(tmp_
     assert ride_c1["transfer"]["status"] == "missed" and ride_c1["transfer"]["margin"] == -90
     assert ride_c1["transfer"]["fallback"]["arrive"] == iso(8, 40)
     assert p.track(o, d, [("nope", "A", "B")], at(8, 1)) is None
+
+
+def test_stays_at_the_stop_instead_of_walking_back_to_board_the_same_trip_earlier(tmp_path):
+    # Line 2 passes P (100 m before B) at 08:13 and B at 08:14; line 1 arrives at B at 08:10.
+    stops = {"A": (0, 0, "1"), "P": (4900, 0, "5"), "B": (5000, 0, "2"), "C": (10_000, 0, "3")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["P", "B", "C"]}}, [
+        ("in", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("on", "2", "0", "work", [hms(8, 13), hms(8, 14), hms(8, 24)]),
+    ])
+    best = p.plan({"station": "1"}, {"station": "3"}, at(7, 55))[0]
+    assert [leg["kind"] for leg in best["legs"]] == ["ride", "ride"]
+    on = rides(best)[1]
+    assert on["from"]["stop"] == "B" and on["start"] == iso(8, 14)
+    assert on["transfer"]["margin"] == 210
+
+
+def test_track_finds_rides_that_ended_before_midnight(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "C": (10_000, 0, "3")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["B", "C"]}}, [
+        ("in", "1", "0", "work", [hms(23, 40), hms(23, 58)]),
+        ("night", "2", "0", "work", [hms(24, 10), hms(24, 20)]),
+    ])
+    tue = (2026, 11, 17)
+    it = p.track({"station": "1"}, {"station": "3"}, [("in", "A", "B"), ("night", "B", "C")], at(0, 15, day=tue))
+    assert it is not None and it["depart"] == iso(23, 40) and it["arrive"] == iso(0, 20, day=tue)
+
+
+def test_fallback_after_the_last_connection_of_the_day_is_tomorrows_first(tmp_path):
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "C": (10_000, 0, "3")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["B", "C"]}}, [
+        ("in", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("last", "2", "0", "work", [hms(8, 12), hms(8, 22)]),
+    ])
+    tr = rides(p.plan({"station": "1"}, {"station": "3"}, at(7, 55), delays={"in": 60})[0])[1]["transfer"]
+    assert tr["status"] == "tight"
+    assert tr["fallback"]["depart"] == iso(8, 12, day=(2026, 11, 17))

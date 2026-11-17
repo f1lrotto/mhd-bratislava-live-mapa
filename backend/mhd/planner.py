@@ -63,6 +63,11 @@ def transfer_status(margin: float, feeder_delay: int | None) -> str:
     return "ok"
 
 
+def _walk_in(par: tuple) -> float:
+    """Walking time of the step that reached a stop: none when staying at the stop."""
+    return 0 if par[0] == "stay" else par[-1]  # ("walk", k, s, w) / ("access", via, w)
+
+
 class _Day:
     """Active trips of one service day, per pattern sorted by departure at the first stop."""
 
@@ -251,7 +256,7 @@ class Planner:
         for k in range(1, MAX_RIDES + 1):
             if not marked:
                 break
-            prev_ready = ready[k - 1]
+            prev_ready, par_k = ready[k - 1], qpar[k - 1]
             ride_k, rp = ride[k - 1][:], rpar[k - 1][:]
             queue: dict[int, int] = {}
             for s in marked:
@@ -266,7 +271,7 @@ class Planner:
                 stops = self.pat_stops[p]
                 n = len(stops)
                 pdl = pdls.get(p, {})
-                j, d, bpos, bt = -1, 0, -1, 0
+                j, d, bpos, bt, bwalk = -1, 0, -1, 0, 0
                 for i in range(queue[p], n):
                     s = stops[i]
                     if j >= 0:
@@ -284,9 +289,12 @@ class Planner:
                     r = prev_ready[s]
                     if r < INF and (j < 0 or r <= cols[i][j] + d):
                         e = self._earliest(day, p, i, r, pdl, mind)
-                        if e is not None and (j < 0 or cols[i][e[0]] + e[1] < cols[i][j] + d):
+                        # The same trip at a later stop: board where the walk to it is shorter
+                        # (staying where the last ride arrives beats walking back along its route).
+                        if e is not None and (j < 0 or cols[i][e[0]] + e[1] < cols[i][j] + d
+                                              or (e[0] == j and _walk_in(par_k[s]) < bwalk)):
                             j, d = e
-                            bpos, bt = i, cols[i][j] + d
+                            bpos, bt, bwalk = i, cols[i][j] + d, _walk_in(par_k[s])
             ride.append(ride_k)
             rpar.append(rp)
             ready_k, qp = prev_ready[:], qpar[k - 1][:]
@@ -586,7 +594,16 @@ class Planner:
             now = now.replace(tzinfo=TZ)
         o_pt, o_plats = self._place(origin)
         d_pt, d_plats = self._place(dest)
-        day = self._day(now.astimezone(TZ).date())
+        local = now.astimezone(TZ).date()
+        # Just after midnight, rides that ended before it belong to yesterday's service day.
+        for dd in (local, local - timedelta(days=1)):
+            it = self._track_day(self._day(dd), o_pt, o_plats, d_pt, d_plats, rides, now, delays)
+            if it is not None:
+                return it
+        return None
+
+    def _track_day(self, day: _Day, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
+                   rides: list[tuple[str, str, str]], now: datetime, delays: dict[str, int] | None) -> dict | None:
         t0 = int(math.floor((now.astimezone(UTC) - day.base).total_seconds()))
         dl = self._instance_delays(day, t0, delays)
         steps: list[tuple] = []
@@ -646,7 +663,10 @@ class Planner:
                 s = self.stop_idx[prev["to"]["stop"]]
                 start = max(datetime.fromisoformat(prev["end"]),
                             datetime.fromisoformat(leg["start"]) + timedelta(seconds=1))
-                res, _ = self._rides(self._stop_point(s), [s], d_pt, d_plats, start, delays, 1)
+                res, why = self._rides(self._stop_point(s), [s], d_pt, d_plats, start, delays, 1)
+                if why == "no_connection":  # the last one today: the next service day's first
+                    nxt = _service_midnight(start.astimezone(TZ).date() + timedelta(days=1))
+                    res, _ = self._rides(self._stop_point(s), [s], d_pt, d_plats, nxt, None, 1)
                 if res:
                     best = min(res, key=lambda x: (x["arrive_t"], x["transfers"]))
                     fb = {k: v for k, v in best.items() if k not in ("depart_t", "arrive_t")}
