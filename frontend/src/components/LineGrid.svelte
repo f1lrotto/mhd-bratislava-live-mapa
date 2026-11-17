@@ -78,7 +78,7 @@
     opacity: 0.45;
   }
   .n {
-    font-size: 0.72rem;
+    font-size: 0.8rem;
     color: var(--muted);
     font-variant-numeric: tabular-nums;
     min-width: 1ch;
