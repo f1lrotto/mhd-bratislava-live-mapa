@@ -340,3 +340,20 @@ def test_fallback_after_the_last_connection_of_the_day_is_tomorrows_first(tmp_pa
     tr = rides(p.plan({"station": "1"}, {"station": "3"}, at(7, 55), delays={"in": 60})[0])[1]["transfer"]
     assert tr["status"] == "tight"
     assert tr["fallback"]["depart"] == iso(8, 12, day=(2026, 11, 17))
+
+
+def test_next_day_fallback_leaves_as_late_as_it_still_arrives_first(tmp_path):
+    # Tomorrow line 4 from D at 08:05 beats the direct 08:12; line 3 reaches D at 00:40 or 07:40.
+    stops = {"A": (0, 0, "1"), "B": (5000, 0, "2"), "C": (10_000, 0, "3"), "D": (5000, 5000, "4")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B"]}, "2": {"0": ["B", "C"]}, "3": {"0": ["B", "D"]},
+                                 "4": {"0": ["D", "C"]}}, [
+        ("in", "1", "0", "work", [hms(8, 0), hms(8, 10)]),
+        ("last", "2", "0", "work", [hms(8, 12), hms(8, 22)]),
+        ("night", "3", "0", "work", [hms(0, 30), hms(0, 40)]),
+        ("morning", "3", "0", "work", [hms(7, 30), hms(7, 40)]),
+        ("on", "4", "0", "work", [hms(8, 5), hms(8, 15)]),
+    ])
+    fb = rides(p.plan({"station": "1"}, {"station": "3"}, at(7, 55), delays={"in": 60})[0])[1]["transfer"]["fallback"]
+    tue = (2026, 11, 17)
+    assert [leg["trip"] for leg in fb["legs"] if leg["kind"] == "ride"] == ["morning", "on"]
+    assert fb["depart"] == iso(7, 30, day=tue) and fb["arrive"] == iso(8, 15, day=tue)

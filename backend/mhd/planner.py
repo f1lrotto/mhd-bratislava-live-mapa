@@ -665,8 +665,7 @@ class Planner:
                             datetime.fromisoformat(leg["start"]) + timedelta(seconds=1))
                 res, why = self._rides(self._stop_point(s), [s], d_pt, d_plats, start, delays, 1)
                 if why == "no_connection":  # the last one today: the next service day's first
-                    nxt = _service_midnight(start.astimezone(TZ).date() + timedelta(days=1))
-                    res, _ = self._rides(self._stop_point(s), [s], d_pt, d_plats, nxt, None, 1)
+                    res = self._next_day_first(s, d_pt, d_plats, start)
                 if res:
                     best = min(res, key=lambda x: (x["arrive_t"], x["transfers"]))
                     fb = {k: v for k, v in best.items() if k not in ("depart_t", "arrive_t")}
@@ -674,6 +673,26 @@ class Planner:
                                   for lg in fb["legs"]]
                     tr["fallback"] = fb
             prev = leg
+
+    def _next_day_first(self, s: int, d_pt: dict, d_plats: list[int] | None, after: datetime) -> list[dict]:
+        """The next service day's first arrival from stop s, leaving as late as still arrives
+        then (searching from midnight alone would ride night buses and wait for hours)."""
+        def first(t: datetime) -> dict | None:
+            res, _ = self._rides(self._stop_point(s), [s], d_pt, d_plats, t, None, 1)
+            return min(res, key=lambda x: (x["arrive_t"], x["transfers"]), default=None)
+
+        best = first(_service_midnight(after.astimezone(TZ).date() + timedelta(days=1)))
+        if best is None:
+            return []
+        lo, hi = best["depart_t"], best["arrive_t"]  # the latest start arriving as early is in [lo, hi)
+        while hi - lo > 60:
+            mid = (lo + hi) / 2
+            cand = first(datetime.fromtimestamp(mid, UTC))
+            if cand is not None and cand["arrive_t"] <= best["arrive_t"]:
+                best, lo = cand, max(mid, cand["depart_t"])
+            else:
+                hi = mid
+        return [best]
 
     def _dist(self, a: int, b: int) -> float:
         return math.hypot(self.stop_xy[a][0] - self.stop_xy[b][0], self.stop_xy[a][1] - self.stop_xy[b][1])
