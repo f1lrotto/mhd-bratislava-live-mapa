@@ -2,7 +2,7 @@
 
 Environment:
   MHD_DATA_DIR      where logs and the static build live (default: ../data next to backend/)
-  MHD_NO_POLL=1     don't start the poller (tests, frontend work against a fixture)
+  MHD_NO_POLL=1     don't start the poller or the nightly jobs (tests, frontend work against a fixture)
   MHD_BASIC_AUTH    "user:password" to put everything behind HTTP basic auth while v1 is private
 
 Run a single worker (no `--workers N`): the poller and logger live in the process, and DPB
@@ -27,7 +27,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import derive, lineview
+from . import derive, lineview, nightly
 from .history import History
 from .logger import PollLogger
 from .planner import MAX_RIDES, Planner
@@ -84,9 +84,9 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await asyncio.to_thread(current_static)  # the first load, before polls need it
-        task = asyncio.create_task(poller.run()) if start_polling else None
+        tasks = [asyncio.create_task(poller.run()), asyncio.create_task(nightly.run_forever(DATA_DIR))] if start_polling else []
         yield
-        if task:
+        for task in tasks:
             task.cancel()
 
     app = FastAPI(title="MHD naživo", lifespan=lifespan)
