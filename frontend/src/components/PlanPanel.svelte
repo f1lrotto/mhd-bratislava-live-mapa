@@ -197,7 +197,9 @@
   const rides = (o: PlanOption) => o.legs.filter((l): l is RideLeg => l.kind === 'ride')
   const isLive = (o: PlanOption) => rides(o).some((l) => l.vehicle || l.delay != null)
   const transfersText = (n: number) => (n === 0 ? 'bez prestupu' : plural(n, 'prestup', 'prestupy', 'prestupov'))
-  const walkMin = (s: string, e: string) => Math.max(1, Math.round((Date.parse(e) - Date.parse(s)) / 60000))
+  // Minutes between two times as displayed (HH:MM, seconds dropped), so durations add up with them.
+  const minOf = (iso: string) => Math.floor(Date.parse(iso) / 60000)
+  const walkMin = (s: string, e: string) => Math.max(1, minOf(e) - minOf(s))
   const placeText = (p: { name: string; platform: string | null }) => p.name + (p.platform ? ` · nást. ${p.platform}` : '')
 
   function inText(iso: string): string | null {
@@ -220,7 +222,7 @@
   /** Wait between arriving at a leg's stop (by a ride or a walk) and its ride leaving, in minutes. */
   function waitMin(o: PlanOption, i: number): number {
     const prev = o.legs[i - 1]
-    return prev ? Math.max(0, Math.round((Date.parse(o.legs[i].start) - Date.parse(prev.end)) / 60000)) : 0
+    return prev ? Math.max(0, minOf(o.legs[i].start) - minOf(prev.end)) : 0
   }
 
   function errorText(e: string): string {
