@@ -33,6 +33,7 @@ from .logger import PollLogger
 from .planner import MAX_RIDES, Planner
 from .poller import Poller
 from .static import TZ, Static
+from .stopevents import StopEventTracker
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path(os.environ.get("MHD_DATA_DIR", ROOT / "data"))
@@ -93,10 +94,15 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     # The latest poll's trip matching (realtime.Realtime): trip_delays(), trip_vehicle(), …
     app.state.realtime = state["derived"].realtime
 
+    stop_events = StopEventTracker()
+
     def on_update(snap) -> None:
         t0 = time.perf_counter()
         state["derived"] = lineview.derive_poll(snap, current_static())
         app.state.realtime = state["derived"].realtime
+        events = stop_events.update(state["derived"].realtime)
+        if poller.logger is not None and snap.polled_at is not None:
+            poller.logger.log_stop_events(snap.polled_at, events)
         ms = (time.perf_counter() - t0) * 1000
         if ms > 500:
             logging.getLogger(__name__).warning("deriving the poll took %d ms", ms)

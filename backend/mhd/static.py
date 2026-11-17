@@ -6,7 +6,7 @@ import json
 import statistics
 from array import array
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -189,9 +189,10 @@ def _angle_diff(a: float, b: float) -> float:
 
 
 def day_start(day: date) -> datetime:
-    """Midnight of a service day as GTFS counts it (noon minus 12 h, which differs from the wall
-    clock's midnight only on DST change days)."""
-    return datetime.combine(day, time(12), TZ) - timedelta(hours=12)
+    """Midnight of a service day as GTFS counts it, in UTC: noon minus 12 h, which differs from the
+    wall clock's midnight on DST change days. (Subtracting in local time would keep wall-clock
+    midnight, so the subtraction is done in UTC.)"""
+    return datetime.combine(day, time(12), TZ).astimezone(timezone.utc) - timedelta(hours=12)
 
 
 @dataclass

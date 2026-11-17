@@ -5,8 +5,10 @@ rolls over (and on startup), the part files of finished hours are compacted into
 
     <root>/vehicles/date=2026-11-16/hour=16.parquet   one row per vehicle per poll
     <root>/polls/date=2026-11-16/hour=16.parquet      one row per poll attempt, including failures
+    <root>/stop_events/date=2026-11-16/hour=16.parquet   one row per trip per stop passed (stopevents)
 
-Partitions use UTC. Nothing is ever deleted except part files after a successful compaction.
+Partitions use UTC. The logger deletes nothing but part files after a successful compaction; old
+days are removed by the nightly retention job (retention.py).
 """
 
 from __future__ import annotations
@@ -47,6 +49,26 @@ POLL_SCHEMA = pa.schema(
         ("error", pa.string()),
     ]
 )
+
+
+STOP_EVENT_SCHEMA = pa.schema(
+    [
+        ("ts", pa.timestamp("ms", tz="UTC")),  # the poll that recorded it
+        ("service_date", pa.date32()),
+        ("trip", pa.string()),
+        ("line", pa.string()),
+        ("dir", pa.string()),
+        ("seq", pa.int16()),  # the stop's index in the trip
+        ("stop", pa.string()),
+        ("scheduled", pa.timestamp("s", tz="UTC")),
+        ("actual", pa.timestamp("s", tz="UTC")),
+        ("delay_s", pa.int32()),
+        ("vehicle", pa.string()),
+        ("final", pa.bool_()),  # the trip's last stop: `actual` is its arrival, not its departure
+    ]
+)
+
+DATASETS = ("vehicles", "polls", "stop_events")
 
 
 def _hour_dir(root: Path, dataset: str, ts: datetime) -> tuple[Path, str]:
@@ -134,6 +156,14 @@ class PollLogger:
             self.compact_finished(now=ts)
         self._current_hour = hour
 
+    def log_stop_events(self, ts: datetime, rows: list[dict]) -> None:
+        if not rows:
+            return
+        try:
+            self._write_part("stop_events", pa.Table.from_pylist(rows, schema=STOP_EVENT_SCHEMA), ts)
+        except Exception:  # logging must never stop the poller
+            log.exception("failed to write stop events")
+
     def recent(self, since: datetime, now: datetime | None = None) -> list[tuple[datetime, list[Vehicle]]]:
         """Logged vehicle polls from `since` until now, oldest first, for restoring state on restart."""
         now = now or datetime.now(timezone.utc)
@@ -161,7 +191,7 @@ class PollLogger:
     def compact_finished(self, now: datetime | None = None) -> None:
         """Merge part files of every hour before the current one into <hour>.parquet."""
         now = now or datetime.now(timezone.utc)
-        for dataset in ("vehicles", "polls"):
+        for dataset in DATASETS:
             cur_dir, cur_hour = _hour_dir(self.root, dataset, now)
             base = self.root / dataset
             if not base.exists():

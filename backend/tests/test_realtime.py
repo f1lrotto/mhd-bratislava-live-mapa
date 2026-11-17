@@ -220,3 +220,37 @@ def test_after_a_feed_outage_a_held_trip_has_to_fit_afresh(tmp_path):
     p.apply([_bus("x", 7400, 60), _bus("z", 7500, 0)], t2)
     rt = lineview.derive_poll(p.snapshot, s, t2).realtime
     assert rt.trip_id("z") == "t1070" and rt.trip_id("x") is None
+
+
+def test_stop_events_are_recorded_once_per_stop_passed(tmp_path):
+    from mhd.stopevents import StopEventTracker
+
+    s = _static(tmp_path)
+    p, tracker, events = Poller(logger=None), StopEventTracker(), []
+    # Trip t990 leaves A at 16:30 and is due at M (5 km) at 16:40 and at B (10 km) at 16:50.
+    for hhmmss, x, *off in [
+        ("16:39:00", 4800),
+        ("16:39:30", 5100),  # passes M+30 m (5030 m) at 16:39:23
+        ("16:39:45", 5010),  # GPS jitter puts it back before M+30 m…
+        ("16:40:00", 5200),  # …and forward again: M must not be recorded a second time
+        ("16:48:00", 9700),
+        ("16:48:15", 9800, 800),  # a GPS glitch puts it off its route: unassigned for a poll…
+        ("16:48:30", 9990),  # …and back; it came within 50 m of B (9950 m) at 16:48:25.9
+    ]:
+        now = datetime.combine(MON_1630.date(), datetime.strptime(hhmmss, "%H:%M:%S").time(), TZ)
+        p.apply([_bus("b", x, 0, y=off[0] if off else 3.0)], now)
+        events += tracker.update(lineview.derive_poll(p.snapshot, s, now).realtime)
+    got = [(e["trip"], e["stop"], e["actual"].astimezone(TZ).strftime("%H:%M:%S"), e["delay_s"], e["final"])
+           for e in events]
+    assert got == [("t990", "M", "16:39:23", -37, False), ("t990", "B", "16:48:26", -94, True)]
+    assert {e["service_date"] for e in events} == {MON_1630.date()}
+
+
+def test_service_days_start_at_noon_minus_12_hours_on_dst_days():
+    from datetime import date, timezone
+
+    from mhd.static import day_start
+
+    utc = timezone.utc
+    assert day_start(date(2027, 3, 28)) == datetime(2027, 3, 27, 22, tzinfo=utc)  # 23 h day
+    assert day_start(date(2026, 10, 25)) == datetime(2026, 10, 24, 23, tzinfo=utc)  # 25 h day
