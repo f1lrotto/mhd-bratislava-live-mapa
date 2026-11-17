@@ -15,12 +15,12 @@
 
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { ANALYTICS, consent, standalone, track } from '../lib/analytics.svelte'
 
   // "Teraz nie" hides the offer for two weeks; installing hides it for good.
   const KEY = 'install-dismissed'
   const SNOOZE_MS = 14 * 24 * 3600_000
 
-  const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true
   const phone = matchMedia('(pointer: coarse)').matches
   // iPadOS reports itself as a Mac.
   const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)
@@ -35,9 +35,18 @@
 
   let closed = $state(standalone || !phone || dismissedRecently())
   // Safari can't be asked to install: it gets the steps instead of a button.
-  const mode = $derived(closed ? null : ios ? 'ios' : deferred ? 'prompt' : null)
+  // It waits until the cookie banner is answered: both sit at the bottom of the screen.
+  const mode = $derived(closed || (ANALYTICS && !consent.choice) ? null : ios ? 'ios' : deferred ? 'prompt' : null)
+  let shown = false
+  $effect(() => {
+    if (mode && !shown) {
+      shown = true
+      track('install_prompt_shown', { mode })
+    }
+  })
 
-  function dismiss() {
+  function dismiss(choice: string) {
+    track('install_prompt_answered', { choice })
     closed = true
     try {
       localStorage.setItem(KEY, String(Date.now()))
@@ -51,12 +60,19 @@
     if (!e) return
     deferred = null // the event prompts only once
     await e.prompt()
-    if ((await e.userChoice).outcome === 'dismissed') dismiss()
-    else closed = true
+    const { outcome } = await e.userChoice
+    if (outcome === 'dismissed') dismiss('dismissed')
+    else {
+      track('install_prompt_answered', { choice: 'accepted' })
+      closed = true
+    }
   }
 
   onMount(() => {
+    // Chromium only, whichever way the app was installed (this card or the browser menu). Safari
+    // has no such event: there, pageviews with display_mode "standalone" show the installs in use.
     const done = () => {
+      track('pwa_installed')
       closed = true
       deferred = null
     }
@@ -73,7 +89,7 @@
         <h2 id="install-title">Pridajte si MHD naživo na plochu</h2>
         <p id="install-text">Mapa sa otvorí jedným ťuknutím, na celú obrazovku ako aplikácia.</p>
       </div>
-      <button class="x" onclick={dismiss} aria-label="Zavrieť">
+      <button class="x" onclick={() => dismiss('closed')} aria-label="Zavrieť">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
           ><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></svg
         >
@@ -91,11 +107,11 @@
         <li>Vyberte <b>Pridať na plochu</b></li>
       </ol>
       <div class="actions">
-        <button class="primary" onclick={dismiss}>Rozumiem</button>
+        <button class="primary" onclick={() => dismiss('ios_understood')}>Rozumiem</button>
       </div>
     {:else}
       <div class="actions">
-        <button class="secondary" onclick={dismiss}>Teraz nie</button>
+        <button class="secondary" onclick={() => dismiss('not_now')}>Teraz nie</button>
         <button class="primary" onclick={install}>Pridať na plochu</button>
       </div>
     {/if}

@@ -30,6 +30,12 @@ Production is https://mhd.filiphupka.com: Railway project `mhd-nazivo`
   deployments). Railway's healthcheck on `/` gates it.
 - DNS: `mhd` CNAME in the Cloudflare zone `filiphupka.com`, DNS only (not proxied), with a
   `_railway-verify.mhd` TXT record.
+- Analytics and monitoring: PostHog EU, project `MHD` (355334) in the FilipHupka organization. The
+  frontend (`src/lib/analytics.svelte.ts`) loads posthog-js on the production host only: cookieless
+  until the visitor accepts the consent banner, nothing at all with GPC or Do Not Track. Keep the
+  privacy page (`PrivacyPanel.svelte`, `/sukromie`) true to what is collected and stored.
+  The server sends a `feed_heartbeat` event per source every 5 min (`mhd/heartbeat.py`, only when
+  `RAILWAY_ENVIRONMENT_NAME=production`); PostHog alerts on them email when a feed goes stale.
 - Railway settings live in Railway, not in the repo (`railway.json` config-as-code is deprecated).
   Change service settings, variables, volumes or DNS only when the user asks.
 

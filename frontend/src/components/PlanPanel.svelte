@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte'
+  import { track } from '../lib/analytics.svelte'
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayBand, delayText, durationText, fromLocalInput, hm, isRegional, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
   import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
@@ -214,6 +215,7 @@
   async function select(i: number | null, fromCard = false) {
     navigate({ kind: 'plan', from, to, at, opt: i }, { replace: !fromCard })
     if (!fromCard) return
+    track('route_option_opened', { index: i })
     await tick()
     sumEl?.focus()
   }

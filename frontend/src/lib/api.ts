@@ -1,3 +1,4 @@
+import { track as trackEvent } from './analytics.svelte'
 import { app, POLL_MS } from './state.svelte'
 import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo } from './types'
 
@@ -69,6 +70,13 @@ export function planQuery(from: string | null, to: string | null, at: string | n
   return `/api/plan?${q}`
 }
 
+function planKinds(query: string): Record<string, string> {
+  const q = new URLSearchParams(query.split('?')[1])
+  const kind = (end: 'from' | 'to') =>
+    !/^-?[\d.]+,-?[\d.]+$/.test(q.get(end) ?? '') ? 'stop' : q.get(`${end}Name`) === 'Moja poloha' ? 'my_location' : 'map_point'
+  return { from: kind('from'), to: kind('to'), departure: q.has('at') ? 'later' : 'now' }
+}
+
 /** Fetch a plan into app.plan; the previous result stays on screen while the same query refreshes.
  * track: the open option's rides (rideSig), kept in the result after it left or lost a connection. */
 export async function refreshPlan(query: string, track?: string | null): Promise<void> {
@@ -77,6 +85,8 @@ export async function refreshPlan(query: string, track?: string | null): Promise
   try {
     const data = await getJson<Plan>(track ? `${query}&track=${encodeURIComponent(track)}` : query)
     if (app.plan?.query === query) app.plan = { query, data, error: null, loading: false }
+    // Once per search, not per 30 s refresh. Only the kind of each end, never where it is.
+    if (!same) trackEvent('route_planned', { ...planKinds(query), options: data.options.length })
   } catch (e) {
     if (app.plan?.query === query)
       app.plan = { query, data: same ? (app.plan?.data ?? null) : null, error: (e as Error).message, loading: false }

@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import ConsentBanner from './components/ConsentBanner.svelte'
   import FiltersPanel from './components/FiltersPanel.svelte'
   import InstallPrompt from './components/InstallPrompt.svelte'
   import LinePanel from './components/LinePanel.svelte'
   import LinesPanel from './components/LinesPanel.svelte'
   import StatusPanel from './components/StatusPanel.svelte'
   import PlanPanel from './components/PlanPanel.svelte'
+  import PrivacyPanel from './components/PrivacyPanel.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
@@ -177,10 +179,13 @@
       <LinesPanel />
     {:else if app.view.kind === 'filters'}
       <FiltersPanel />
+    {:else if app.view.kind === 'privacy'}
+      <PrivacyPanel />
     {/if}
   {/key}
 
   <InstallPrompt />
+  <ConsentBanner />
 </main>
 
 <style>

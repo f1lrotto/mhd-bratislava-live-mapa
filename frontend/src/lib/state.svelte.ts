@@ -1,7 +1,8 @@
+import { track } from './analytics.svelte'
 import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo, VehicleType } from './types'
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
-//   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre
+//   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 // Old /zastavka/<stop id> links are mapped to the stop's station by the station panel.
 export type View =
@@ -13,6 +14,7 @@ export type View =
   | { kind: 'status' }
   | { kind: 'lines' }
   | { kind: 'filters' }
+  | { kind: 'privacy' }
 
 export interface Filters {
   types: VehicleType[] // empty = all
@@ -79,6 +81,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'stav') view = { kind: 'status' }
   else if (parts[0] === 'linky') view = { kind: 'lines' }
   else if (parts[0] === 'filtre') view = { kind: 'filters' }
+  else if (parts[0] === 'sukromie') view = { kind: 'privacy' }
   const list = (k: string) => (q.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   return {
     view,
@@ -122,6 +125,9 @@ export function buildUrl(view: View, filters: Filters): string {
     case 'filters':
       path = '/filtre'
       break
+    case 'privacy':
+      path = '/sukromie'
+      break
   }
   if (filters.types.length) q.set('typ', filters.types.map((t) => TYPE_NAME[t]).join(','))
   if (filters.lines.length) q.set('linky', filters.lines.join(','))
@@ -148,6 +154,8 @@ export function navigate(view: View, opts: { replace?: boolean } = {}): void {
 export function setFilters(f: Partial<Filters>): void {
   app.filters = { ...app.filters, ...f }
   syncUrl(true)
+  const n = app.filters
+  track('filters_changed', { changed: Object.keys(f), types: n.types, lines: n.lines, late: n.late, regional: n.regional, active: filtersActive(n) })
 }
 
 function syncUrl(replace = false, prev?: View['kind']): void {

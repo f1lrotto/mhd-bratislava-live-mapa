@@ -2,7 +2,7 @@
   import { BAND_COLORS, BAND_LABELS, NO_DATA_COLOR, STALE_COLOR, TYPE_PLURAL } from '../lib/format'
   import { passes } from '../lib/filter'
   import { shapeSvg } from '../lib/markers'
-  import { app, filtersActive, NO_FILTERS, regionalDown, setFilters } from '../lib/state.svelte'
+  import { app, filtersActive, navigate, NO_FILTERS, regionalDown, setFilters } from '../lib/state.svelte'
   import type { VehicleType } from '../lib/types'
   import LineGrid from './LineGrid.svelte'
   import Panel from './Panel.svelte'
@@ -75,6 +75,8 @@
 
   <h3 class="section">Linky {f.lines.length ? `(${f.lines.length})` : ''}</h3>
   <LineGrid selected={f.lines} onpick={toggleLine} />
+
+  <button class="secondary" onclick={() => navigate({ kind: 'privacy' })}>Ochrana súkromia a cookies</button>
 </Panel>
 
 <style>
