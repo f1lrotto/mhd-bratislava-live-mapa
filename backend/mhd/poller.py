@@ -1,4 +1,4 @@
-"""Polls the DPB feed every 30 s, whatever the number of users, and keeps the latest snapshot."""
+"""Polls the DPB feed every 15 s, whatever the number of users, and keeps the latest snapshot."""
 
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ from .logger import PollLogger
 
 log = logging.getLogger(__name__)
 
-POLL_INTERVAL_S = 30
+# Vehicles report every 10–15 s (measured 16 Nov 2026), so 15 s catches nearly every update.
+POLL_INTERVAL_S = 15
 # A vehicle counts as having moved when its position changes by more than this. GPS jitter at a
 # stop is a few metres; the feed rounds to ~0.1 m, so exact equality would be too strict.
 MOVE_THRESHOLD_M = 10.0
@@ -123,14 +124,14 @@ class Poller:
                 log.exception("on_update failed")
 
     async def run(self) -> None:
-        headers = {"User-Agent": "mhd-nazivo/0.1 (single server poller, every 30 s)"}
+        headers = {"User-Agent": "mhd-nazivo/0.1 (single server poller, every 15 s)"}
         if self.logger is not None:
             try:
                 since = datetime.now(timezone.utc) - timedelta(minutes=15)
                 self.restore(await asyncio.to_thread(self.logger.recent, since))
             except Exception:
                 log.exception("could not restore movement state from the logs")
-        async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        async with httpx.AsyncClient(timeout=12, headers=headers) as client:
             next_at = time.monotonic()
             while True:
                 try:

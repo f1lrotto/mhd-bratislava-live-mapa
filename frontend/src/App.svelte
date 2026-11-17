@@ -9,7 +9,7 @@
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
   import { passes } from './lib/filter'
-  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters, syncBack } from './lib/state.svelte'
+  import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
   const initial = parseUrl()
@@ -78,7 +78,7 @@
 
   const statusOpen = $derived(app.view.kind === 'status')
   $effect(() => {
-    if (statusOpen) return poll(refreshStatus)
+    if (statusOpen) return poll(refreshStatus, SLOW_POLL_MS)
   })
 
   const age = $derived(feedAgeS())

@@ -20,7 +20,9 @@ export interface Filters {
   late: boolean // 3+ min late only
 }
 
-export const POLL_MS = 30_000
+export const POLL_MS = 15_000
+/** For views that change slowly (city status, journey plans). */
+export const SLOW_POLL_MS = 30_000
 export const FEED_DOWN_MS = 3 * 60_000
 
 // Raw state: every value is replaced as a whole, never mutated, so 640 vehicles aren't proxied.

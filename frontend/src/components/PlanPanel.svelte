@@ -3,7 +3,7 @@
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayText, durationText, fromLocalInput, hm, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
   import { firstTrip, placeLabel, pointValue, setPlanEnd } from '../lib/places'
-  import { app, navigate } from '../lib/state.svelte'
+  import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
   import type { PlanOption, PlanReason, RideLeg } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
@@ -102,7 +102,7 @@
     if (v !== atTime) setAt(fromLocalInput(`${atDate}T${v}`))
   }
 
-  // Departing now: refresh every 30 s while open. A fixed time is fetched once (and on return
+  // Departing now: refresh every 30 s (SLOW_POLL_MS) while open. A fixed time is fetched once (and on return
   // from a vehicle only if the cached result is for another query or failed).
   $effect(() => {
     const q = query
@@ -114,7 +114,7 @@
       return
     }
     // untrack: refreshPlan reads app.plan synchronously, which must not re-run this effect.
-    return untrack(() => poll(() => refreshPlan(q)))
+    return untrack(() => poll(() => refreshPlan(q), SLOW_POLL_MS))
   })
 
   // Keep the chosen option across refreshes: the one with the same first ride, else the same index.
