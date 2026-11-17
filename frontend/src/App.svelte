@@ -113,7 +113,7 @@
 
   <header class="topbar">
     <button class="brand" onclick={() => ((menuOpen = false), closePanel())} aria-label="MHD naživo, zavrieť panel">
-      <span class="logo" aria-hidden="true"></span>
+      <img class="logo" src="/favicon.svg" alt="" width="22" height="22" />
       <span class="brand-text">MHD <b>naživo</b></span>
     </button>
     <div class="fresh" class:bad={down} title="Kedy server naposledy načítal polohy z DPB">
@@ -238,19 +238,7 @@
     white-space: nowrap;
   }
   .logo {
-    width: 22px;
-    height: 22px;
-    border-radius: 7px;
-    background: linear-gradient(135deg, #d7263d, #ef6c28);
-    box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.0);
-    position: relative;
-  }
-  .logo::after {
-    content: '';
-    position: absolute;
-    inset: 6px;
-    border-radius: 50%;
-    background: #fff;
+    flex: none;
   }
   .fresh {
     display: flex;
