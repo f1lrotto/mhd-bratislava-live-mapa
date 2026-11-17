@@ -120,7 +120,7 @@ def test_city_status_worst_lines_need_three_vehicles(tmp_path):
     assert [w["line"] for w in st["worst"]] == ["83"]
     assert st["worst"][0]["medianDelay"] == 240
     # Line 39 isn't in the static build, so its service is unknown and its delay doesn't count.
-    assert st["shareLate"] == 0.667
+    assert st["shareLate"] == 0.333  # late from 5 min: 4 min (240 s) is not
 
 
 def test_parked_vehicles_get_no_flags_and_leave_city_status(tmp_path):

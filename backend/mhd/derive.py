@@ -9,15 +9,15 @@ from .poller import Snapshot
 
 STALE_AFTER_S = 10 * 60
 FEED_DOWN_AFTER_S = 3 * 60
-LATE_S = 3 * 60
+LATE_S = 5 * 60
 
-# Bands: 0 = on time (0–59 s), 1 = 1–3 min, 2 = 3–10 min, 3 = 10+ min, None = no data.
+# Bands: 0 = on time (under 2 min), 1 = 2–5 min, 2 = 5–10 min, 3 = 10+ min, None = no data.
 def delay_band(delay_s: int | None) -> int | None:
     if delay_s is None:
         return None
-    if delay_s < 60:
+    if delay_s < 120:
         return 0
-    if delay_s < 180:
+    if delay_s < 300:
         return 1
     if delay_s < 600:
         return 2

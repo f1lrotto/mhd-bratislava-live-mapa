@@ -1,6 +1,7 @@
 import type { VehicleType } from './types'
 
-// Delay bands: 0 on time, 1 = 1–3 min, 2 = 3–10 min, 3 = 10+ min, null = no data.
+// Delay bands: 0 on time (under 2 min), 1 = 2–5 min, 2 = 5–10 min, 3 = 10+ min, null = no data.
+// Kept in step with derive.delay_band in the backend.
 export const BAND_COLORS = ['#1a9850', '#e6a700', '#ef6c28', '#d7263d'] as const
 export const NO_DATA_COLOR = '#7d8592'
 export const STALE_COLOR = '#b4bac3'
@@ -9,12 +10,12 @@ export function bandColor(band: number | null | undefined): string {
   return band == null ? NO_DATA_COLOR : BAND_COLORS[band]
 }
 
-export const BAND_LABELS = ['načas', '1–3 min', '3–10 min', '10+ min', 'bez údajov']
+export const BAND_LABELS = ['načas', '2–5 min', '5–10 min', '10+ min', 'bez údajov']
 
 export function delayBand(delay: number | null): number | null {
   if (delay == null) return null
-  if (delay < 60) return 0
-  if (delay < 180) return 1
+  if (delay < 120) return 0
+  if (delay < 300) return 1
   if (delay < 600) return 2
   return 3
 }

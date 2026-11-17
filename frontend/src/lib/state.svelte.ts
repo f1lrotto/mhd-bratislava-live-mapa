@@ -17,7 +17,7 @@ export type View =
 export interface Filters {
   types: VehicleType[] // empty = all
   lines: string[] // empty = all
-  late: boolean // 3+ min late only
+  late: boolean // 5+ min late only
 }
 
 export const POLL_MS = 15_000

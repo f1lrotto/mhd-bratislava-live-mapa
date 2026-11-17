@@ -70,8 +70,8 @@ def test_stale_and_heading():
 
 
 def test_delay_band_boundaries():
-    assert [derive.delay_band(s) for s in (None, 0, 59, 60, 179, 180, 599, 600, 900)] == [
-        None, 0, 0, 1, 1, 2, 2, 3, 3,
+    assert [derive.delay_band(s) for s in (None, 0, 60, 119, 120, 299, 300, 599, 600, 900)] == [
+        None, 0, 0, 0, 1, 1, 2, 2, 3, 3,
     ]
 
 

@@ -40,7 +40,7 @@
   </div>
   <label class="switch">
     <input type="checkbox" checked={f.late} onchange={(e) => setFilters({ late: e.currentTarget.checked })} />
-    Len meškajúce 3+ min
+    Len meškajúce 5+ min
   </label>
 
   <p class="count" class:empty={!shown && total}>

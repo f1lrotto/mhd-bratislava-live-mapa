@@ -44,7 +44,7 @@
     const s = d.summary
     const parts = [plural(s.count, 'vozidlo', 'vozidlá', 'vozidiel') + ` smer ${d.headsign}`]
     if (s.medianDelay != null)
-      parts.push(s.medianDelay < 60 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay)}`)
+      parts.push(s.medianDelay < 120 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay)}`)
     if (s.biggestGap) {
       const g = s.biggestGap
       parts.push(
@@ -160,7 +160,7 @@
                 <span class="where">{where(current, v)}</span>
                 <span class="muted small">č. {v.key}</span>
               </span>
-              <span class="delay" class:late={(v.delay ?? 0) >= 180}>{delayText(v.delay)}</span>
+              <span class="delay" class:late={(v.delay ?? 0) >= 300}>{delayText(v.delay)}</span>
             </button>
             {#if v.gapAhead && i < running.length - 1}
               <div class="between {v.gapAhead.flag ?? ''}">

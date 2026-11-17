@@ -293,8 +293,8 @@
     box?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     box?.focus({ preventScroll: true })
   }
-  /** Delay colour by the app's bands: amber for 1–3 min, red from 3 min. */
-  const lateTone = (delay: number | null) => ((delayBand(delay) ?? 0) >= 2 ? 'red' : 'amber')
+  /** Delay colour by the app's bands: a minute is muted (on time on the map), amber 2–5 min, red from 5. */
+  const lateTone = (delay: number | null) => ['soft', 'amber', 'red', 'red'][delayBand(delay) ?? 0]
   /** The card's accessible name, including what its visible tags say. */
   function cardLabel(o: PlanOption, i: number): string {
     const fb = missedFb(o)
@@ -953,6 +953,9 @@
   }
   .fb-times {
     font-variant-numeric: tabular-nums;
+  }
+  .soft {
+    color: var(--muted);
   }
   .amber {
     color: var(--warn-text);

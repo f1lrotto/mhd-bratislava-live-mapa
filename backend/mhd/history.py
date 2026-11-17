@@ -1,4 +1,4 @@
-"""Share of vehicles running 3+ min late through the day, from the poll logs.
+"""Share of vehicles running 5+ min late through the day, from the poll logs.
 
 Today's curve and the median of the last four same weekdays, in 10-minute buckets of local time.
 The baseline only exists once all four of those days have logs.

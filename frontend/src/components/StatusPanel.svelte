@@ -41,7 +41,7 @@
     <div class="big">
       <div class="fact">
         <span class="value">{pct(st.shareLate)}</span>
-        <span class="label">vozidiel mešká 3+ min</span>
+        <span class="label">vozidiel mešká 5+ min</span>
       </div>
       <div class="fact">
         <span class="value">{st.vehicles}</span>
