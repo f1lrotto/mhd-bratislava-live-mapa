@@ -64,12 +64,12 @@ test('favourites belong to their user and go with the account', async () => {
   await anna('/profile/favorites', { kind: 'station', ref: '93' })
   await anna('/profile/favorites', { kind: 'route', ref: 'here>48.14520,17.10385', names: { to: 'Domov' } })
   await ben('/profile/favorites', { kind: 'line', ref: '83' })
-  await anna('/profile/preferences', { lang: 'en', start: 'map' })
+  await anna('/profile/preferences', { lang: 'en', start: 'map', theme: 'dark' })
   await anna('/profile/preferences', { start: null })
 
   const a = (await anna('/profile')).body
   assert.equal(a.user.email, 'anna@example.sk')
-  assert.deepEqual(a.preferences, { lang: 'en' })
+  assert.deepEqual(a.preferences, { lang: 'en', theme: 'dark' })
   assert.deepEqual(
     a.favorites.map((f) => [f.kind, f.ref, f.names]),
     [
@@ -110,7 +110,8 @@ test('writes need a session and a valid favourite', async () => {
     { kind: 'shop', ref: '1' },
   ])
     assert.equal((await c('/profile/favorites', bad)).status, 400, JSON.stringify(bad))
-  assert.equal((await c('/profile/preferences', { theme: 'dark' })).status, 400)
+  assert.equal((await c('/profile/preferences', { font: 'large' })).status, 400)
+  assert.equal((await c('/profile/preferences', { theme: 'blue' })).status, 400)
   assert.equal((await c('/profile/preferences', { lang: 'de' })).status, 400)
 })
 

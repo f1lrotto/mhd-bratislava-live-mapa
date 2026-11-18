@@ -53,6 +53,8 @@ const Preferences = z
     lang: z.enum(['sk', 'en']).nullable().optional(),
     /** What the installed app opens to: the favourites (default) or the map. */
     start: z.enum(['favorites', 'map']).nullable().optional(),
+    /** The colour theme; unset follows the device's setting. */
+    theme: z.enum(['light', 'dark']).nullable().optional(),
   })
   .strict()
 
