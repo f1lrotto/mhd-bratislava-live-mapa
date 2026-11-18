@@ -80,16 +80,16 @@ function canvas(w: number, h: number): CanvasRenderingContext2D {
   return ctx
 }
 
-function body(type: string, color: string): ImageData {
+function body(type: string, color: string, outline: string): ImageData {
   const s = shapeOf(type)
   const ctx = canvas(s.w, s.h)
   ctx.translate(s.w / 2, s.h / 2)
-  const outline = new Path2D(rectPath(s.body))
+  const shape = new Path2D(rectPath(s.body))
   if (s.poles) {
     const poles = new Path2D(polesPath(s))
     ctx.lineCap = 'round'
     ctx.lineWidth = 4.5
-    ctx.strokeStyle = '#ffffff'
+    ctx.strokeStyle = outline
     ctx.stroke(poles)
     ctx.lineWidth = 2
     ctx.strokeStyle = REGIONAL_FILL
@@ -97,24 +97,24 @@ function body(type: string, color: string): ImageData {
   }
   if (type === 'regional') {
     ctx.lineWidth = 6.5
-    ctx.strokeStyle = '#ffffff'
-    ctx.stroke(outline)
+    ctx.strokeStyle = outline
+    ctx.stroke(shape)
     ctx.fillStyle = REGIONAL_FILL
-    ctx.fill(outline)
+    ctx.fill(shape)
     ctx.lineWidth = 3.5
     ctx.strokeStyle = color
-    ctx.stroke(outline)
+    ctx.stroke(shape)
   } else {
     ctx.fillStyle = color
-    ctx.fill(outline)
+    ctx.fill(shape)
     ctx.lineWidth = 2
-    ctx.strokeStyle = '#ffffff'
-    ctx.stroke(outline)
+    ctx.strokeStyle = outline
+    ctx.stroke(shape)
   }
   return ctx.getImageData(0, 0, s.w * RATIO, s.h * RATIO)
 }
 
-function arrow(color: string): ImageData {
+function arrow(color: string, outline: string): ImageData {
   const ctx = canvas(ARROW, ARROW)
   const c = ARROW / 2
   ctx.beginPath()
@@ -125,17 +125,20 @@ function arrow(color: string): ImageData {
   ctx.fillStyle = color
   ctx.fill()
   ctx.lineWidth = 1.5
-  ctx.strokeStyle = '#ffffff'
+  ctx.strokeStyle = outline
   ctx.stroke()
   return ctx.getImageData(0, 0, ARROW * RATIO, ARROW * RATIO)
 }
 
-export function addMarkerImages(map: MlMap): void {
+/** Adds the marker images, or redraws them for the other theme. On the dark map, white outlines
+ * and the light grey of stale vehicles (piled up in depots) glare, so both are dark there. */
+export function addMarkerImages(map: MlMap, dark: boolean): void {
+  const outline = dark ? '#1b1f24' : '#ffffff'
+  const colors = dark ? { ...COLORS, s: '#5e6670' } : COLORS
+  const put = (id: string, img: ImageData) => (map.hasImage(id) ? map.updateImage(id, img) : map.addImage(id, img, { pixelRatio: RATIO }))
   for (const key of COLOR_KEYS) {
-    for (const type of Object.keys(SHAPES)) {
-      map.addImage(`body-${type}-${key}`, body(type, COLORS[key]), { pixelRatio: RATIO })
-    }
-    map.addImage(`arrow-${key}`, arrow(COLORS[key]), { pixelRatio: RATIO })
+    for (const type of Object.keys(SHAPES)) put(`body-${type}-${key}`, body(type, colors[key], outline))
+    put(`arrow-${key}`, arrow(colors[key], outline))
   }
 }
 

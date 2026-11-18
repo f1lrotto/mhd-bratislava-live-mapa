@@ -24,13 +24,72 @@
   // The bundler moves MapLibre's worker; tell MapLibre where it ended up.
   maplibregl.setWorkerUrl(workerUrl)
 
-  // The base map by theme; both share OpenFreeMap's sources, sprite and fonts.
-  const STYLE = { light: 'https://tiles.openfreemap.org/styles/positron', dark: 'https://tiles.openfreemap.org/styles/dark' }
-  /** What of the app's layers follows the theme, layers read it with C(name): colours, and the
-   * opacity of dimmed vehicles (their grey glares on the dark map). */
+  // The base map: OpenFreeMap's positron, recoloured dark slate in the dark theme (DARK_BASE).
+  // OpenFreeMap's own dark style is near black with streets darker than the land.
+  const STYLE = 'https://tiles.openfreemap.org/styles/positron'
+  const DARK_BG = '#262b31'
+  const DARK_TEXT = { 'text-halo-color': DARK_BG }
+  /** Paint of positron's layers in the dark theme: streets lighter than the land, water darker. */
+  const DARK_BASE: Record<string, Record<string, unknown>> = {
+    background: { 'background-color': DARK_BG },
+    park: { 'fill-color': '#28312d' },
+    water: { 'fill-color': '#1b242d' },
+    landcover_ice_shelf: { 'fill-color': '#2c3137' },
+    landcover_glacier: { 'fill-color': '#2c3137' },
+    landuse_residential: { 'fill-color': '#292e34' },
+    landcover_wood: { 'fill-color': '#29332e' },
+    waterway: { 'line-color': '#24313c' },
+    building: { 'fill-color': '#2f343b', 'fill-outline-color': '#363c43' },
+    tunnel_motorway_casing: { 'line-color': '#30363d' },
+    tunnel_motorway_inner: { 'line-color': '#3c434b' },
+    'aeroway-taxiway': { 'line-color': '#3c424a' },
+    'aeroway-runway-casing': { 'line-color': '#3c424a' },
+    'aeroway-area': { 'fill-color': '#30353c' },
+    'aeroway-runway': { 'line-color': '#4a515a' },
+    road_area_pier: { 'fill-color': DARK_BG },
+    road_pier: { 'line-color': DARK_BG },
+    highway_path: { 'line-color': '#3b4249' },
+    highway_minor: { 'line-color': '#434a52' },
+    highway_major_casing: { 'line-color': '#1e2227' },
+    highway_major_inner: { 'line-color': '#545c66' },
+    highway_major_subtle: { 'line-color': 'rgba(92, 100, 110, 0.69)' },
+    highway_motorway_casing: { 'line-color': '#1e2227' },
+    highway_motorway_inner: { 'line-color': ['interpolate', ['linear'], ['zoom'], 5.8, 'rgba(92, 100, 110, 0.53)', 6, '#5e6771'] },
+    highway_motorway_subtle: { 'line-color': 'rgba(92, 100, 110, 0.53)' },
+    highway_motorway_bridge_casing: { 'line-color': '#1e2227' },
+    highway_motorway_bridge_inner: { 'line-color': ['interpolate', ['linear'], ['zoom'], 5.8, 'rgba(92, 100, 110, 0.53)', 6, '#5e6771'] },
+    railway_transit: { 'line-color': '#4b525a' },
+    railway_transit_dashline: { 'line-color': '#30363c' },
+    railway_service: { 'line-color': '#4b525a' },
+    railway_service_dashline: { 'line-color': '#30363c' },
+    railway: { 'line-color': '#4b525a' },
+    railway_dashline: { 'line-color': '#30363c' },
+    boundary_3: { 'line-color': '#5b626b' },
+    boundary_2: { 'line-color': '#5b626b' },
+    boundary_disputed: { 'line-color': '#5b626b' },
+    waterway_line_label: { 'text-color': '#6f8799', 'text-halo-color': 'rgba(38, 43, 49, 0.7)' },
+    water_name_point_label: { 'text-color': '#8199c2', 'text-halo-color': 'rgba(38, 43, 49, 0.7)' },
+    water_name_line_label: { 'text-color': '#8199c2', 'text-halo-color': 'rgba(38, 43, 49, 0.7)' },
+    'highway-name-path': { 'text-color': '#7f8790', ...DARK_TEXT },
+    'highway-name-minor': { 'text-color': '#a0a8b1', ...DARK_TEXT },
+    'highway-name-major': { 'text-color': '#a0a8b1', ...DARK_TEXT },
+    'highway-shield-non-us': { 'icon-opacity': 0.35, 'text-opacity': 0.6 },
+    airport: { 'text-color': '#a0a8b1', ...DARK_TEXT },
+    label_other: { 'text-color': '#b9c0c8', ...DARK_TEXT },
+    label_village: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_town: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_state: { 'text-color': '#b9c0c8', ...DARK_TEXT },
+    label_city: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_city_capital: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_country_3: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_country_2: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+    label_country_1: { 'text-color': '#d6dbe1', ...DARK_TEXT },
+  }
+  /** Colours of the app's layers that follow the theme; layers read them with C(name). Parked
+   * vehicles' labels are grey on the dark map: piled up in a depot, white ones glare. */
   const PALETTE = {
-    light: { paper: '#ffffff', ink: '#1d232b', ink2: '#4a525c', walk: '#5b6470', reach: '#2a2180', to: '#a51428', mine: '#0f6b37', dim: 0.28 },
-    dark: { paper: '#1b1f24', ink: '#e6e9ed', ink2: '#aab2bc', walk: '#9ba4af', reach: '#c4bdfa', to: '#ff8a96', mine: '#6fd59b', dim: 0.1 },
+    light: { paper: '#ffffff', ink: '#1d232b', ink2: '#4a525c', walk: '#5b6470', reach: '#2a2180', to: '#a51428', mine: '#0f6b37', idle: '#ffffff' },
+    dark: { paper: '#1b1f24', ink: '#e6e9ed', ink2: '#aab2bc', walk: '#9ba4af', reach: '#c4bdfa', to: '#ff8a96', mine: '#6fd59b', idle: '#9aa3ad' },
   }
   const C = (name: keyof typeof PALETTE.light) => ['global-state', name] as any
   const ANIM_MS = 1500
@@ -510,7 +569,7 @@
   // --- setup ------------------------------------------------------------------------------------
   const EMPTY = { type: 'FeatureCollection' as const, features: [] }
   const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 10, 0.42, 12, 0.66, 14, 0.88, 16, 1] as any
-  const dimmed = (on: number, off: number | object, other = on) =>
+  const dimmed = (on: number, off: number, other = on) =>
     ['case', ['get', 'dim'], off, ['get', 'other'], other, on] as any
   // The active line's (or planned trip's) vehicles are 30% larger and always labelled;
   // vehicles out of service are 30% smaller.
@@ -530,9 +589,13 @@
 
   const SOURCES = ['reach', 'speeds', 'speed-sel', 'speed-route', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near']
 
-  /** The other theme's base map with the app's sources and layers carried over: those under the
-   * base map's labels stay under them, the rest on top. */
-  function keepOwn(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
+  /** The base map in the current theme with the app's sources and layers carried over (on a theme
+   * switch): those under the base map's labels stay under them, the rest on top. */
+  function themed(prev: StyleSpecification | undefined, base: StyleSpecification): StyleSpecification {
+    const next =
+      theme === 'dark'
+        ? { ...base, layers: base.layers.map((l) => (DARK_BASE[l.id] ? ({ ...l, paint: { ...l.paint, ...DARK_BASE[l.id] } } as typeof l) : l)) }
+        : base
     if (!prev) return next
     const own = prev.layers.filter((l) => 'source' in l && SOURCES.includes(l.source))
     const cut = prev.layers.findIndex((l) => l.type === 'symbol' && !own.includes(l))
@@ -547,7 +610,7 @@
   }
 
   function setup(m: MlMap): void {
-    addMarkerImages(m)
+    addMarkerImages(m, theme === 'dark')
     addPinImages(m)
     for (const id of SOURCES) m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
@@ -908,7 +971,7 @@
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
-      paint: { 'icon-opacity': C('dim') },
+      paint: { 'icon-opacity': 0.28 },
     })
     m.addLayer({
       id: 'plan-stops',
@@ -1011,8 +1074,8 @@
         'symbol-sort-key': ['get', 'z'],
       },
       paint: {
-        'text-color': '#ffffff',
-        'icon-opacity': ['case', ['get', 'idle'], 0.7, dimmed(1, C('dim'), 0.5)],
+        'text-color': ['case', ['get', 'idle'], C('idle'), '#ffffff'],
+        'icon-opacity': ['case', ['get', 'idle'], 0.7, dimmed(1, 0.28, 0.5)],
         'text-opacity': ['case', ['get', 'idle'], 0.9, dimmed(1, 0, 0.6)],
       },
     })
@@ -1156,7 +1219,8 @@
   onMount(() => {
     const m = new maplibregl.Map({
       container: el,
-      style: STYLE[theme],
+      style: STYLE,
+      transformStyle: themed,
       globalState: PALETTE[theme],
       center: [17.115, 48.152],
       zoom: 12,
@@ -1210,7 +1274,8 @@
     if (!map || next === theme) return
     theme = next
     for (const [k, v] of Object.entries(PALETTE[next])) map.setGlobalStateProperty(k, v)
-    map.setStyle(STYLE[next], { globalState: PALETTE[next], transformStyle: keepOwn })
+    if (loaded) addMarkerImages(map, next === 'dark')
+    map.setStyle(STYLE, { globalState: PALETTE[next], transformStyle: themed })
   })
 
   // New positions: animate from where markers are now.
