@@ -146,6 +146,11 @@ input:focus-visible {
   width: 40px !important;
   height: 40px !important;
 }
+/* A lone button keeps the group's rounding (MapLibre rounds it only while focused), so a pressed
+   button's dark background (the speed toggle's) has round corners. */
+.maplibregl-ctrl-group button:only-child {
+  border-radius: inherit;
+}
 @media (max-width: 767.98px) {
   main.has-panel .maplibregl-ctrl-bottom-right {
     display: none;
