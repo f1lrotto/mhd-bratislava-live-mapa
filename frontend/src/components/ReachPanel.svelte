@@ -1,10 +1,11 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { poll, reachQuery, refreshReach } from '../lib/api'
-  import { dayText, fromLocalInput, hm, toLocalInput } from '../lib/format'
+  import { hm } from '../lib/format'
   import { placeLabel, pointValue, setPlanEnd } from '../lib/places'
   import { REACH_COLORS, REACH_LIMITS, reachBands, reachShapes } from '../lib/reach'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
+  import DepartPicker from './DepartPicker.svelte'
   import Panel from './Panel.svelte'
   import PlaceInput from './PlaceInput.svelte'
 
@@ -62,40 +63,14 @@
     )
   }
 
-  // --- departure time, as in the planner: Bratislava calendar days ------------------------------
-  const DAY_MS = 86_400_000
-  const today = $derived(toLocalInput(new Date(now).toISOString()).slice(0, 10))
-  const tomorrow = $derived(new Date(Date.parse(today) + DAY_MS).toISOString().slice(0, 10))
-  const atDate = $derived(at ? toLocalInput(at).slice(0, 10) : null)
-  const atTime = $derived(at ? toLocalInput(at).slice(11, 16) : '')
-
-  function setDay(date: string) {
-    const time = atTime || toLocalInput(new Date(Math.ceil((now + 60_000) / 300_000) * 300_000).toISOString()).slice(11, 16)
-    set({ at: fromLocalInput(`${date}T${time}`) })
-  }
-
-  let timeText = $state('')
-  $effect(() => {
-    timeText = atTime
-  })
-  let timeError = $state(false)
-  function commitTime() {
-    const m = /^\s*(\d{1,2})(?:[:.\s]?(\d{2}))?\s*$/.exec(timeText)
-    const h = m ? +m[1] : NaN
-    const mm = m?.[2] ? +m[2] : 0
-    timeError = !(h >= 0 && h <= 23 && mm >= 0 && mm <= 59)
-    if (timeError || !atDate) return
-    const v = `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
-    timeText = v
-    if (v !== atTime) set({ at: fromLocalInput(`${atDate}T${v}`) })
-  }
+  let pickerOpen = $state(false)
 
   const errorText = (e: string) =>
     /unknown station/.test(e) ? 'Zastávku sme nenašli. Vyberte ju znova.' : `Dostupnosť sa nepodarilo vypočítať (${e}).`
   const areaText = (km2: number) => (km2 < 10 ? km2.toFixed(1).replace('.', ',') : String(Math.round(km2)))
 </script>
 
-<Panel tall label="Dostupnosť">
+<Panel tall label="Dostupnosť" expand={pickerOpen}>
   {#snippet header()}
     <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
     <strong>Kam sa dostanem</strong>
@@ -105,22 +80,9 @@
   {#if geoBusy}<p class="note">Zisťujem polohu…</p>{/if}
   {#if geoError}<p class="note error">{geoError}</p>{/if}
 
-  <div class="chips-row" role="group" aria-label="Čas odchodu">
-    <button class:active={!at} aria-pressed={!at} onclick={() => set({ at: null })}>Teraz</button>
-    <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>Dnes</button>
-    <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>Zajtra</button>
-    {#if at && atDate !== today && atDate !== tomorrow}
-      <button class="active" aria-pressed="true">{dayText(at)}</button>
-    {/if}
-    {#if at}
-      <label class="time" class:bad={timeError}>
-        <span>o</span>
-        <input type="text" inputmode="numeric" maxlength="5" placeholder="08:00" aria-label="Čas odchodu (hh:mm)" aria-invalid={timeError}
-          bind:value={timeText} onchange={commitTime} onkeydown={(e) => e.key === 'Enter' && commitTime()} />
-      </label>
-    {/if}
+  <div class="when">
+    <DepartPicker {at} {now} bind:open={pickerOpen} onchange={(v) => set({ at: v })} />
   </div>
-  {#if timeError}<p class="note error">Čas zadajte ako hh:mm, napríklad 08:05.</p>{/if}
 
   <div class="chips-row" role="group" aria-label="Najviac">
     <span class="muted small">najviac</span>
@@ -180,29 +142,8 @@
     background: var(--text);
     color: #fff;
   }
-  .time {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-  }
-  .time input {
-    width: 4.2em;
-    height: 34px;
-    border-radius: 8px;
-    border: 1.5px solid #d4d8dd;
-    padding: 0 8px;
-    font: inherit;
-    font-size: 16px;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-  }
-  .time input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .time.bad input {
-    border-color: var(--bad);
+  .when {
+    margin: 10px 0 4px;
   }
   .legend {
     list-style: none;

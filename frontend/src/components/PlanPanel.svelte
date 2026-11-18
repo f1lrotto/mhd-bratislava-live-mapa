@@ -6,6 +6,7 @@
   import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
   import type { FallbackOption, PlanOption, PlanReason, RideLeg } from '../lib/types'
+  import DepartPicker from './DepartPicker.svelte'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
   import PlaceInput from './PlaceInput.svelte'
@@ -72,35 +73,12 @@
   const DAY_MS = 86_400_000
   const today = $derived(toLocalInput(new Date(now).toISOString()).slice(0, 10))
   const tomorrow = $derived(new Date(Date.parse(today) + DAY_MS).toISOString().slice(0, 10))
-  const atDate = $derived(at ? toLocalInput(at).slice(0, 10) : null)
-  const atTime = $derived(at ? toLocalInput(at).slice(11, 16) : '')
+  let pickerOpen = $state(false)
 
   function dayWord(iso: string | null): string {
     if (!iso) return 'teraz'
     const d = toLocalInput(iso).slice(0, 10)
     return `${d === today ? 'dnes' : d === tomorrow ? 'zajtra' : dayText(iso)} ${hm(iso)}`
-  }
-
-  function setDay(date: string) {
-    // Keep the chosen time; without one, the next full 5 minutes.
-    const time = atTime || toLocalInput(new Date(Math.ceil((now + 60_000) / 300_000) * 300_000).toISOString()).slice(11, 16)
-    setAt(fromLocalInput(`${date}T${time}`))
-  }
-
-  let timeText = $state('')
-  $effect(() => {
-    timeText = atTime
-  })
-  let timeError = $state(false)
-  function commitTime() {
-    const m = /^\s*(\d{1,2})(?:[:.\s]?(\d{2}))?\s*$/.exec(timeText)
-    const h = m ? +m[1] : NaN
-    const min = m?.[2] ? +m[2] : 0
-    timeError = !(h >= 0 && h <= 23 && min >= 0 && min <= 59)
-    if (timeError || !atDate) return
-    const v = `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`
-    timeText = v
-    if (v !== atTime) setAt(fromLocalInput(`${atDate}T${v}`))
   }
 
   // The open option's rides are kept in its history entry, so coming back to it (the back button
@@ -383,7 +361,7 @@
 <Panel
   tall
   label="Trasa"
-  expand={sheetUp && !collapsed && !sel}
+  expand={(sheetUp || pickerOpen) && !collapsed && !sel}
   onback={sel ? { label: 'Všetky možnosti', go: backToList } : undefined}
 >
   {#snippet header()}
@@ -582,31 +560,9 @@
     {#if geoBusy}<p class="note">Zisťujem polohu…</p>{/if}
     {#if geoError}<p class="note error">{geoError}</p>{/if}
 
-    <div class="when" role="group" aria-label="Čas odchodu">
-      <button class:active={!at} aria-pressed={!at} onclick={() => setAt(null)}>Teraz</button>
-      <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>Dnes</button>
-      <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>Zajtra</button>
-      {#if at && atDate !== today && atDate !== tomorrow}
-        <button class="active" aria-pressed="true">{dayText(at)}</button>
-      {/if}
-      {#if at}
-        <label class="time" class:bad={timeError}>
-          <span>o</span>
-          <input
-            type="text"
-            inputmode="numeric"
-            maxlength="5"
-            placeholder="08:00"
-            aria-label="Čas odchodu (hh:mm)"
-            aria-invalid={timeError}
-            bind:value={timeText}
-            onchange={commitTime}
-            onkeydown={(e) => e.key === 'Enter' && commitTime()}
-          />
-        </label>
-      {/if}
+    <div class="when">
+      <DepartPicker {at} {now} bind:open={pickerOpen} onchange={setAt} />
     </div>
-    {#if timeError}<p class="note error">Čas zadajte ako hh:mm, napríklad 08:05.</p>{/if}
     </div>
 
     {#if !from || !to}
@@ -713,47 +669,7 @@
     stroke-linejoin: round;
   }
   .when {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
     margin: 10px 0 4px 22px;
-  }
-  .when button {
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 999px;
-    background: var(--chip);
-    font-weight: 600;
-    font-size: 0.88rem;
-  }
-  .when button.active {
-    background: var(--text);
-    color: #fff;
-  }
-  .time {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    font-weight: 600;
-  }
-  .time input {
-    width: 4.2em;
-    height: 34px;
-    border-radius: 8px;
-    border: 1.5px solid #d4d8dd;
-    padding: 0 8px;
-    font: inherit;
-    font-size: 16px;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
-  }
-  .time input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .time.bad input {
-    border-color: var(--bad);
   }
   .summary-line {
     display: none;
