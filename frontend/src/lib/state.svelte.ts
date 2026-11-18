@@ -2,7 +2,7 @@ import { track } from './analytics.svelte'
 import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, StopInfo, VehicleType } from './types'
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
-//   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
+//   /linka/83?smer=1   /linka/83/spolahlivost?smer=1&dni=vikendy   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 //   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
 //   /blizko (departures near the user; the position is never in the URL, so a shared link locates its opener)
@@ -11,6 +11,7 @@ import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, St
 export type View =
   | { kind: 'none' }
   | { kind: 'line'; line: string; dir: string | null }
+  | { kind: 'reliability'; line: string; dir: string | null; weekends: boolean }
   | { kind: 'vehicle'; key: string }
   | { kind: 'station'; code: string; stop: string | null }
   | { kind: 'plan'; from: string | null; to: string | null; at: string | null; opt: number | null }
@@ -80,7 +81,9 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   const parts = loc.pathname.split('/').filter(Boolean).map(decodeURIComponent)
   const q = new URLSearchParams(loc.search)
   let view: View = { kind: 'none' }
-  if (parts[0] === 'linka' && parts[1]) view = { kind: 'line', line: parts[1], dir: q.get('smer') }
+  if (parts[0] === 'linka' && parts[1] && parts[2] === 'spolahlivost')
+    view = { kind: 'reliability', line: parts[1], dir: q.get('smer'), weekends: q.get('dni') === 'vikendy' }
+  else if (parts[0] === 'linka' && parts[1]) view = { kind: 'line', line: parts[1], dir: q.get('smer') }
   else if (parts[0] === 'vozidlo' && parts[1]) view = { kind: 'vehicle', key: parts[1] }
   else if (parts[0] === 'zastavka' && parts[1]) view = { kind: 'station', code: parts[1], stop: q.get('nastupiste') }
   else if (parts[0] === 'trasa') {
@@ -117,6 +120,11 @@ export function buildUrl(view: View, filters: Filters): string {
     case 'line':
       path = `/linka/${encodeURIComponent(view.line)}`
       if (view.dir != null) q.set('smer', view.dir)
+      break
+    case 'reliability':
+      path = `/linka/${encodeURIComponent(view.line)}/spolahlivost`
+      if (view.dir != null) q.set('smer', view.dir)
+      if (view.weekends) q.set('dni', 'vikendy')
       break
     case 'vehicle':
       path = `/vozidlo/${encodeURIComponent(view.key)}`

@@ -10,6 +10,7 @@
   import NearbyPanel from './components/NearbyPanel.svelte'
   import PrivacyPanel from './components/PrivacyPanel.svelte'
   import ReachPanel from './components/ReachPanel.svelte'
+  import ReliabilityPanel from './components/ReliabilityPanel.svelte'
   import ReplayPanel from './components/ReplayPanel.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
@@ -59,14 +60,14 @@
   // The line whose route is drawn: the open line, or the open vehicle's line.
   const activeLine = $derived.by(() => {
     const v = app.view
-    if (v.kind === 'line') return v.line
+    if (v.kind === 'line' || v.kind === 'reliability') return v.line
     if (v.kind === 'vehicle') return app.live?.vehicles.find((x) => x.key === v.key)?.line ?? null
     return null
   })
   const selectedDir = $derived.by(() => {
     const v = app.view
     // With no direction in the URL the first one is shown, as in the panel and route overlay.
-    if (v.kind === 'line') return v.dir ?? (app.lineView?.line === v.line ? (app.lineView.directions[0]?.id ?? null) : null)
+    if (v.kind === 'line' || v.kind === 'reliability') return v.dir ?? (app.lineView?.line === v.line ? (app.lineView.directions[0]?.id ?? null) : null)
     if (v.kind === 'vehicle') return app.live?.vehicles.find((x) => x.key === v.key)?.dir ?? null
     return null
   })
@@ -197,9 +198,11 @@
     {/if}
   {/if}
 
-  {#key app.view.kind === 'line' ? `line-${app.view.line}` : app.view.kind}
+  {#key app.view.kind === 'line' || app.view.kind === 'reliability' ? `${app.view.kind}-${app.view.line}` : app.view.kind}
     {#if app.view.kind === 'line'}
       <LinePanel line={app.view.line} dir={app.view.dir} />
+    {:else if app.view.kind === 'reliability'}
+      <ReliabilityPanel line={app.view.line} dir={app.view.dir} weekends={app.view.weekends} />
     {:else if app.view.kind === 'vehicle'}
       <VehiclePanel key={app.view.key} />
     {:else if app.view.kind === 'station'}

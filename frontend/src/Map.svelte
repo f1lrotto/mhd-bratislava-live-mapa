@@ -927,7 +927,7 @@
         if (code) return navigate({ kind: 'station', code, stop: p.code ? null : stop })
       }
       const rl = m.queryRenderedFeatures(box(e.point, r), { layers: ['route-line'] })[0]
-      if (rl && app.view.kind === 'line') return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
+      if (rl && (app.view.kind === 'line' || app.view.kind === 'reliability')) return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
       if (app.view.kind === 'vehicle' || app.view.kind === 'station') closePanel()
     })
     for (const layer of ['reach-stops', 'veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
@@ -1166,7 +1166,7 @@
     untrack(() => {
       updateRoute(lv)
       if (!lv || lv.line !== activeLine) return
-      if (app.view.kind === 'line' && fitted !== lv.line) {
+      if ((app.view.kind === 'line' || app.view.kind === 'reliability') && fitted !== lv.line) {
         fitted = lv.line
         // Wait a frame so the panel has its final size.
         requestAnimationFrame(() => fitLine(lv))
@@ -1174,7 +1174,7 @@
     })
   })
   $effect(() => {
-    if (app.view.kind !== 'line') untrack(() => (fitted = null))
+    if (app.view.kind !== 'line' && app.view.kind !== 'reliability') untrack(() => (fitted = null))
   })
 
   // Opening a vehicle (from a tap, a ribbon row or a deep link) centres it once.

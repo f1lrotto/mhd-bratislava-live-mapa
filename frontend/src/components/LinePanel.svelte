@@ -151,6 +151,15 @@
       <span>{current.headsign}</span>
     </div>
 
+    <button class="reliability" onclick={() => navigate({ kind: 'reliability', line, dir: current.id, weekends: false })}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM4 16h4v4H4z" /></svg>
+      <span class="row-main">
+        <span>Kde a kedy linka mešká</span>
+        <span class="muted small">spoľahlivosť za posledné 4 týždne</span>
+      </span>
+      <span class="chev" aria-hidden="true">›</span>
+    </button>
+
     {#if running.length}
       <h3 class="section">Poradie vozidiel od začiatku trasy</h3>
       <ol class="order">
@@ -345,6 +354,35 @@
   }
   .ends span:last-child {
     text-align: right;
+  }
+  .reliability {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin: 4px 0 2px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--chip);
+    text-align: left;
+    min-height: 48px;
+  }
+  .reliability:hover {
+    background: var(--hover);
+  }
+  .reliability svg {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    fill: var(--accent);
+  }
+  .reliability .row-main span:first-child {
+    font-weight: 600;
+  }
+  .chev {
+    font-size: 1.4rem;
+    color: var(--muted);
+    line-height: 1;
   }
   .order,
   .unmatched {

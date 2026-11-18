@@ -281,3 +281,38 @@ export interface Reach {
   walk: { speed: number; detour: number; maxM: number }
   stops: [number, number, number, string][]
 }
+
+/** Delay figures of a line or direction over the kept days: p50/p90 of all stop passes (s) and
+ * the share of trips that were 5+ min late at some stop. */
+export interface ReliabilitySummary {
+  passes: number
+  trips: number
+  p50: number | null
+  p90: number | null
+  lateTrips: number | null
+}
+
+/** One direction's stops (rows) × hours of the service day (columns; 24+ is after midnight).
+ * A cell is null with too few stop passes; `n` always has the count. */
+export interface ReliabilityDirection {
+  id: string
+  headsign: string
+  from: string
+  stops: string[]
+  hours: number[]
+  median: (number | null)[][]
+  p90: (number | null)[][]
+  late: (number | null)[][]
+  n: (number | null)[][]
+  /** Median delay at each stop over all hours. */
+  stopMedian: (number | null)[]
+  summary: ReliabilitySummary
+}
+
+export interface LineReliability {
+  line: string
+  kind: 'workdays' | 'weekends'
+  days: { count: number; from: string | null; to: string | null }
+  summary: ReliabilitySummary
+  directions: ReliabilityDirection[]
+}
