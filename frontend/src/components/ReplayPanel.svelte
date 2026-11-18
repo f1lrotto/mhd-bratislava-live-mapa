@@ -7,6 +7,7 @@
   import { app, navigate } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
+  import TimeStepper from './TimeStepper.svelte'
 
   let { at }: { at: string | null } = $props()
 
@@ -66,6 +67,8 @@
     }, 400)
     return () => clearTimeout(timer)
   })
+
+  let timeOpen = $state(false)
 
   function toggle() {
     if (replay.playing) pause()
@@ -139,16 +142,17 @@
       <span class="muted">{replay.t ? WEEKDAY.format(replay.t * 1000) : ''}</span>
     </div>
     {#if day}
-      <label class="time">
-        <span class="small muted">Čas</span>
-        <input
-          type="time"
-          value={toLocalInput(iso(replay.t)).slice(11, 16)}
-          onchange={(e) => e.currentTarget.value && seek(wallTime(day, e.currentTarget.value))}
-        />
-      </label>
+      <button class="time-btn" class:open={timeOpen} aria-expanded={timeOpen} aria-controls="replay-time" onclick={() => (timeOpen = !timeOpen)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+        Čas
+      </button>
     {/if}
   </div>
+  {#if timeOpen && day}
+    <div class="time-pop" id="replay-time" role="group" aria-label="Čas záznamu">
+      <TimeStepper value={replay.t * 1000} min={(hours[0] ?? 0) * 1000} max={latest() * 1000} onchange={(ms) => seek(ms / 1000)} />
+    </div>
+  {/if}
 
   {#if day}
     <div class="scrub">
@@ -270,19 +274,39 @@
     font-size: 1.6rem;
     font-variant-numeric: tabular-nums;
   }
-  .time {
+  .time-btn {
     flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 38px;
+    padding: 0 12px 0 10px;
+    border-radius: 999px;
+    background: var(--chip);
+    font-weight: 600;
+    font-size: 0.88rem;
   }
-  .time input {
-    font: inherit;
-    height: 40px;
-    padding: 0 8px;
-    border-radius: 10px;
-    border: 1.5px solid #d4d8dd;
-    background: #fff;
+  .time-btn:hover {
+    background: var(--hover);
+  }
+  .time-btn.open {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+  .time-btn svg {
+    width: 17px;
+    height: 17px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .time-pop {
+    margin-top: 10px;
+    padding: 10px 12px 12px;
+    border-radius: 14px;
+    border: 1px solid #e3e6ea;
+    box-shadow: var(--shadow-sm);
   }
   .scrub {
     position: relative;
