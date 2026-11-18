@@ -40,12 +40,13 @@ export function searchStations(query: string, limit = 8): { code: string; name: 
   return hits.slice(0, limit)
 }
 
-/** Set one end of the open plan (a station code or a point), keeping the other end and the time. */
+/** Set one end of the open plan (a station code or a point), keeping the other end and the time;
+ * in the reachability view, its starting point. */
 export function setPlanEnd(end: 'from' | 'to', value: string, name?: string): void {
   if (name) app.placeNames = { ...app.placeNames, [value]: name }
   const v = app.view
-  if (v.kind !== 'plan') return
-  navigate({ ...v, [end]: value, opt: null }, { replace: true })
+  if (v.kind === 'plan') navigate({ ...v, [end]: value, opt: null }, { replace: true })
+  else if (v.kind === 'reach' && end === 'from') navigate({ ...v, from: value }, { replace: true })
 }
 
 /** The option's rides as "trip~from~to,…": identifies it across refreshes, and the planner's track parameter. */

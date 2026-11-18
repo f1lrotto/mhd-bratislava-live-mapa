@@ -46,8 +46,8 @@
       Aby sme vedeli, koľko ľudí stránku používa a ktoré funkcie sú užitočné, posielame službe PostHog (PostHog Inc., údaje
       uložené v EÚ vo Frankfurte) záznam o zobrazených stránkach a použitých funkciách: adresu stránky bez parametrov,
       odkiaľ ste prišli, prehliadač, operačný systém, typ zariadenia, približnú krajinu a mesto odvodené z IP adresy a to,
-      či ste stránku otvorili ako nainštalovanú aplikáciu. Pri hľadaní trasy posielame len to, či ste zadali zastávku,
-      svoju polohu alebo bod na mape, nikdy samotné miesto.
+      či ste stránku otvorili ako nainštalovanú aplikáciu. Pri hľadaní trasy a mapy dosahu posielame len to, či ste
+      zadali zastávku, svoju polohu alebo bod na mape (pri dosahu aj zvolený počet minút), nikdy samotné miesto.
     </p>
     <p>
       V tomto režime sa do prehliadača nič neukladá. PostHog rozlišuje návštevníkov podľa odtlačku z IP adresy a
@@ -74,9 +74,9 @@
 
     <h3 class="section">Vaša poloha</h3>
     <p>
-      Polohu zisťujeme len po ťuknutí na „Moja poloha“ a s povolením prehliadača. Pri hľadaní trasy ju prehliadač pošle
-      nášmu serveru, ktorý z nej vypočíta spojenia; neukladáme ju a neposielame ju službe PostHog. Je však súčasťou adresy
-      stránky, preto si dajte pozor, komu odkaz na trasu pošlete.
+      Polohu zisťujeme len po ťuknutí na „Moja poloha“ a s povolením prehliadača. Pri hľadaní trasy alebo mapy dosahu ju
+      prehliadač pošle nášmu serveru, ktorý z nej vypočíta spojenia; neukladáme ju a neposielame ju službe PostHog. Je však súčasťou adresy
+      stránky, preto si dajte pozor, komu odkaz na trasu alebo dosah pošlete.
     </p>
 
     <h3 class="section">Server a mapa</h3>

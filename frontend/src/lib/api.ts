@@ -1,6 +1,6 @@
 import { track as trackEvent } from './analytics.svelte'
 import { app, POLL_MS } from './state.svelte'
-import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo } from './types'
+import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, StopInfo } from './types'
 
 export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal, headers: { Accept: 'application/json' } })
@@ -90,6 +90,33 @@ export async function refreshPlan(query: string, track?: string | null): Promise
   } catch (e) {
     if (app.plan?.query === query)
       app.plan = { query, data: same ? (app.plan?.data ?? null) : null, error: (e as Error).message, loading: false }
+  }
+}
+
+/** The reachability query for a starting point, time and limit (minutes), or null without a start. */
+export function reachQuery(from: string | null, at: string | null, min: number): string | null {
+  if (!from) return null
+  const q = new URLSearchParams({ from, min: String(min) })
+  if (at) q.set('at', at)
+  return `/api/reach?${q}`
+}
+
+/** Fetch a reachability map into app.reach; the previous one stays on screen while the same query refreshes. */
+export async function refreshReach(query: string): Promise<void> {
+  const same = app.reach?.query === query
+  app.reach = { query, data: same ? (app.reach?.data ?? null) : null, error: null, loading: true }
+  try {
+    const data = await getJson<Reach>(query)
+    if (app.reach?.query === query) app.reach = { query, data, error: null, loading: false }
+    // Once per search, not per refresh. Only the kind of start and the limit, never where it is.
+    if (!same) {
+      const q = new URLSearchParams(query.split('?')[1])
+      const from = q.get('from') ?? ''
+      trackEvent('reach_shown', { from: /,/.test(from) ? 'point' : 'stop', minutes: +(q.get('min') ?? 0), departure: q.has('at') ? 'later' : 'now' })
+    }
+  } catch (e) {
+    if (app.reach?.query === query)
+      app.reach = { query, data: same ? (app.reach?.data ?? null) : null, error: (e as Error).message, loading: false }
   }
 }
 

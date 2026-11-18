@@ -8,6 +8,7 @@
   import StatusPanel from './components/StatusPanel.svelte'
   import PlanPanel from './components/PlanPanel.svelte'
   import PrivacyPanel from './components/PrivacyPanel.svelte'
+  import ReachPanel from './components/ReachPanel.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
@@ -95,16 +96,17 @@
   // On phones the nav buttons sit in a menu behind a burger button.
   let menuOpen = $state(false)
 
-  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan') {
+  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan' | 'reach') {
     menuOpen = false
     if (app.view.kind === kind) closePanel()
     else if (kind === 'plan') navigate({ kind, from: null, to: null, at: null, opt: null })
+    else if (kind === 'reach') navigate({ kind, from: null, at: null, min: 30 })
     else navigate({ kind })
   }
 
-  // Picking a point belongs to the planner; leaving it cancels the pick.
+  // Picking a point belongs to the planner and the reachability map; leaving them cancels the pick.
   $effect(() => {
-    if (app.view.kind !== 'plan') untrack(() => (app.pick = null))
+    if (app.view.kind !== 'plan' && app.view.kind !== 'reach') untrack(() => (app.pick = null))
   })
 </script>
 
@@ -130,6 +132,10 @@
       <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
         <span>Trasa</span>
+      </button>
+      <button class:active={app.view.kind === 'reach'} onclick={() => toggle('reach')} aria-pressed={app.view.kind === 'reach'} aria-label="Kam sa dostanem">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
+        <span>Dosah</span>
       </button>
       <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
@@ -163,7 +169,7 @@
 
   {#if app.pick}
     <div class="banner pick" role="status">
-      <span>Ťuknite na mapu alebo zastávku: <b>{app.pick === 'from' ? 'odkiaľ' : 'kam'}</b> idete.</span>
+      <span>Ťuknite na mapu alebo zastávku: <b>{app.pick === 'from' ? 'odkiaľ' : 'kam'}</b> {app.view.kind === 'reach' ? 'začínate' : 'idete'}.</span>
       <button onclick={() => (app.pick = null)}>Zrušiť</button>
     </div>
   {:else if app.view.kind === 'none' && app.live && !down}
@@ -185,6 +191,8 @@
       <StationPanel code={app.view.code} stop={app.view.stop} />
     {:else if app.view.kind === 'plan'}
       <PlanPanel from={app.view.from} to={app.view.to} at={app.view.at} opt={app.view.opt} />
+    {:else if app.view.kind === 'reach'}
+      <ReachPanel from={app.view.from} at={app.view.at} min={app.view.min} />
     {:else if app.view.kind === 'status'}
       <StatusPanel />
     {:else if app.view.kind === 'lines'}

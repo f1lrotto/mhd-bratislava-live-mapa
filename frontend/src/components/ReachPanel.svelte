@@ -1,0 +1,239 @@
+<script lang="ts">
+  import { untrack } from 'svelte'
+  import { poll, reachQuery, refreshReach } from '../lib/api'
+  import { dayText, fromLocalInput, hm, toLocalInput } from '../lib/format'
+  import { placeLabel, pointValue, setPlanEnd } from '../lib/places'
+  import { REACH_COLORS, REACH_LIMITS, reachBands, reachShapes } from '../lib/reach'
+  import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
+  import Panel from './Panel.svelte'
+  import PlaceInput from './PlaceInput.svelte'
+
+  let { from, at, min }: { from: string | null; at: string | null; min: number } = $props()
+
+  const query = $derived(reachQuery(from, at, min))
+  const reach = $derived(app.reach && app.reach.query === query ? app.reach : null)
+  const bands = $derived(reachBands(min))
+  // Contoured here only for the areas; the map draws its own copy of the same shapes.
+  const areas = $derived(reach?.data ? reachShapes(reach.data, bands).areas : null)
+  const now = $derived(app.tick + app.skewMs)
+
+  // Departing now: refresh every 30 s while open, as "now" moves on and delays change. A fixed
+  // time is fetched once.
+  $effect(() => {
+    const q = query
+    if (!q) return
+    if (at) {
+      untrack(() => {
+        if (app.reach?.query !== q || app.reach.error) refreshReach(q)
+      })
+      return
+    }
+    return untrack(() => poll(() => refreshReach(q), SLOW_POLL_MS))
+  })
+
+  let fromInput = $state<HTMLInputElement>()
+  $effect(() => {
+    if (!untrack(() => from)) fromInput?.focus()
+  })
+
+  function set(v: Partial<{ from: string | null; at: string | null; min: number }>) {
+    navigate({ kind: 'reach', from, at, min, ...v }, { replace: true })
+  }
+
+  let geoError = $state<string | null>(null)
+  let geoBusy = $state(false)
+  function locate() {
+    geoError = null
+    if (!navigator.geolocation) {
+      geoError = 'Tento prehliadač polohu nepodporuje.'
+      return
+    }
+    geoBusy = true
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        geoBusy = false
+        setPlanEnd('from', pointValue(p.coords.latitude, p.coords.longitude), 'Moja poloha')
+      },
+      (e) => {
+        geoBusy = false
+        geoError = e.code === e.PERMISSION_DENIED ? 'Prístup k polohe je zakázaný.' : 'Polohu sa nepodarilo zistiť.'
+      },
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
+    )
+  }
+
+  // --- departure time, as in the planner: Bratislava calendar days ------------------------------
+  const DAY_MS = 86_400_000
+  const today = $derived(toLocalInput(new Date(now).toISOString()).slice(0, 10))
+  const tomorrow = $derived(new Date(Date.parse(today) + DAY_MS).toISOString().slice(0, 10))
+  const atDate = $derived(at ? toLocalInput(at).slice(0, 10) : null)
+  const atTime = $derived(at ? toLocalInput(at).slice(11, 16) : '')
+
+  function setDay(date: string) {
+    const time = atTime || toLocalInput(new Date(Math.ceil((now + 60_000) / 300_000) * 300_000).toISOString()).slice(11, 16)
+    set({ at: fromLocalInput(`${date}T${time}`) })
+  }
+
+  let timeText = $state('')
+  $effect(() => {
+    timeText = atTime
+  })
+  let timeError = $state(false)
+  function commitTime() {
+    const m = /^\s*(\d{1,2})(?:[:.\s]?(\d{2}))?\s*$/.exec(timeText)
+    const h = m ? +m[1] : NaN
+    const mm = m?.[2] ? +m[2] : 0
+    timeError = !(h >= 0 && h <= 23 && mm >= 0 && mm <= 59)
+    if (timeError || !atDate) return
+    const v = `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`
+    timeText = v
+    if (v !== atTime) set({ at: fromLocalInput(`${atDate}T${v}`) })
+  }
+
+  const errorText = (e: string) =>
+    /unknown station/.test(e) ? 'Zastávku sme nenašli. Vyberte ju znova.' : `Dostupnosť sa nepodarilo vypočítať (${e}).`
+  const areaText = (km2: number) => (km2 < 10 ? km2.toFixed(1).replace('.', ',') : String(Math.round(km2)))
+</script>
+
+<Panel tall label="Dostupnosť">
+  {#snippet header()}
+    <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
+    <strong>Kam sa dostanem</strong>
+  {/snippet}
+
+  <PlaceInput end="from" label="Odkiaľ" value={from} bind:input={fromInput} onpick={(c) => set({ from: c })} onlocate={locate} onmap={() => (app.pick = app.pick === 'from' ? null : 'from')} />
+  {#if geoBusy}<p class="note">Zisťujem polohu…</p>{/if}
+  {#if geoError}<p class="note error">{geoError}</p>{/if}
+
+  <div class="chips-row" role="group" aria-label="Čas odchodu">
+    <button class:active={!at} aria-pressed={!at} onclick={() => set({ at: null })}>Teraz</button>
+    <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>Dnes</button>
+    <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>Zajtra</button>
+    {#if at && atDate !== today && atDate !== tomorrow}
+      <button class="active" aria-pressed="true">{dayText(at)}</button>
+    {/if}
+    {#if at}
+      <label class="time" class:bad={timeError}>
+        <span>o</span>
+        <input type="text" inputmode="numeric" maxlength="5" placeholder="08:00" aria-label="Čas odchodu (hh:mm)" aria-invalid={timeError}
+          bind:value={timeText} onchange={commitTime} onkeydown={(e) => e.key === 'Enter' && commitTime()} />
+      </label>
+    {/if}
+  </div>
+  {#if timeError}<p class="note error">Čas zadajte ako hh:mm, napríklad 08:05.</p>{/if}
+
+  <div class="chips-row" role="group" aria-label="Najviac">
+    <span class="muted small">najviac</span>
+    {#each REACH_LIMITS as m (m)}
+      <button class:active={min === m} aria-pressed={min === m} onclick={() => set({ min: m })}>{m} min</button>
+    {/each}
+  </div>
+
+  {#if !from}
+    <p class="note">Zadajte zastávku, svoju polohu alebo ťuknite na mapu. Ukážeme, kam sa odtiaľ dostanete MHD a pešo.</p>
+  {:else if !reach || (reach.loading && !reach.data)}
+    <div class="skeleton" aria-busy="true"><div></div></div>
+  {:else if reach.error && !reach.data}
+    <p class="note error">{errorText(reach.error)}</p>
+  {:else if reach.data && areas}
+    <ul class="legend" aria-label="Kam sa dostanete">
+      {#each bands as b, i (b)}
+        <li>
+          <span class="swatch" style:--c={REACH_COLORS[i]} aria-hidden="true"></span>
+          <span><strong>do {b} min</strong> <span class="muted">· {areaText(areas[i])} km²</span></span>
+        </li>
+      {/each}
+    </ul>
+    <p class="note">
+      Z miesta {placeLabel(from)} {at ? `o ${hm(at)}` : 'teraz'}{reach.data.live ? ', s aktuálnym meškaním' : ''}: pešo
+      k zastávke, MHD s prestupmi a pešo k cieľu (najviac 2 km vzdušnou čiarou).
+    </p>
+    <p class="note">Ťuknite na mapu a začnite inde.</p>
+    {#if reach.error}<p class="note error">Obnovenie zlyhalo, ukazujeme posledný výsledok.</p>{/if}
+  {/if}
+</Panel>
+
+<style>
+  .head-icon {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+  .chips-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 10px 0 4px;
+  }
+  .chips-row button {
+    height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--chip);
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .chips-row button.active {
+    background: var(--text);
+    color: #fff;
+  }
+  .time {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .time input {
+    width: 4.2em;
+    height: 34px;
+    border-radius: 8px;
+    border: 1.5px solid #d4d8dd;
+    padding: 0 8px;
+    font: inherit;
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .time input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .time.bad input {
+    border-color: var(--bad);
+  }
+  .legend {
+    list-style: none;
+    margin: 14px 0 6px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .legend li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .swatch {
+    width: 22px;
+    height: 16px;
+    border-radius: 4px;
+    background: var(--c);
+    opacity: 0.75;
+  }
+  .skeleton div {
+    height: 110px;
+    border-radius: 12px;
+    background: var(--chip);
+    margin: 14px 0;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    50% {
+      opacity: 0.5;
+    }
+  }
+</style>

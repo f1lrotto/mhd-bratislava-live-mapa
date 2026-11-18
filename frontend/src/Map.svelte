@@ -4,10 +4,11 @@
   import 'maplibre-gl/dist/maplibre-gl.css'
   import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
   import { onMount, untrack } from 'svelte'
-  import { planQuery } from './lib/api'
+  import { planQuery, reachQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
+  import { reachBands, reachShapes } from './lib/reach'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
@@ -98,7 +99,8 @@
       const mine = planKeys?.has(v.key) ?? false
       if (!sel && !mine && !passes(v, app.filters)) continue
       const p = at(v.key, t) ?? [v.lon, v.lat]
-      const dim = (activeLine != null && v.line !== activeLine && !sel) || (planKeys != null && !mine && !sel)
+      // Over the reachability map, vehicles fade so its bands read.
+      const dim = (activeLine != null && v.line !== activeLine && !sel) || (planKeys != null && !mine && !sel) || view.kind === 'reach'
       // On the active line, vehicles of the other directions stay visible but softer.
       const other = !dim && !sel && activeLine != null && selectedDir != null && v.dir != null && v.dir !== selectedDir
       // Laying over, going to the depot, parked: grey, smaller and fainter than vehicles in service.
@@ -307,10 +309,39 @@
   function setup(m: MlMap): void {
     addMarkerImages(m)
     addPinImages(m)
-    for (const id of ['stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles'])
+    for (const id of ['reach', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles'])
       m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
+    // The reachability bands, nested widest first, so the nearer ones are darker.
+    m.addLayer(
+      {
+        id: 'reach-fill',
+        type: 'fill',
+        source: 'reach',
+        filter: ['has', 'band'],
+        paint: { 'fill-color': ['get', 'color'], 'fill-opacity': 0.2 },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'reach-line',
+        type: 'line',
+        source: 'reach',
+        filter: ['has', 'band'],
+        layout: { 'line-join': 'round' },
+        paint: { 'line-color': ['get', 'color'], 'line-width': 1.5, 'line-opacity': 0.8 },
+      },
+      firstLabel,
+    )
+    m.addLayer({
+      id: 'reach-origin',
+      type: 'circle',
+      source: 'reach',
+      filter: ['has', 'origin'],
+      paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#3a2ea8', 'circle-stroke-width': 4.5 },
+    })
     m.addLayer(
       {
         id: 'route-casing',
@@ -687,6 +718,14 @@
         else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
         return
       }
+      if (app.view.kind === 'reach') {
+        // Over the reachability map, a tap starts it there: at a station, or at the point.
+        const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
+        const code = f && String(f.properties.station ?? f.properties.code ?? '')
+        if (code && app.stations[code]) setPlanEnd('from', code)
+        else setPlanEnd('from', pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        return
+      }
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
       const v = vs.find((f) => !f.properties.dim) ?? vs[0]
       if (v) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
@@ -851,6 +890,23 @@
     })
   })
 
+
+  // The reachability map: its bands, fitted once per starting point, time and limit.
+  let fittedReach: string | null = null
+  $effect(() => {
+    const v = app.view
+    const r = app.reach
+    if (!loaded || !map) return
+    const q = v.kind === 'reach' ? reachQuery(v.from, v.at, v.min) : null
+    const data = q && r?.query === q ? r.data : null
+    const shapes = data && v.kind === 'reach' ? reachShapes(data, reachBands(v.min)) : null
+    ;(map.getSource('reach') as GeoJSONSource).setData({ type: 'FeatureCollection', features: shapes?.features ?? [] })
+    if (!q) fittedReach = null
+    if (!shapes?.bounds || fittedReach === q) return
+    fittedReach = q
+    const [[w, s], [e, n]] = shapes.bounds
+    untrack(() => requestAnimationFrame(() => fitCoords([[w, s], [e, n]])))
+  })
 
   // The approach follows each live poll.
   $effect(() => {

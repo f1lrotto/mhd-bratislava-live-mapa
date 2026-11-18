@@ -1,9 +1,10 @@
 import { track } from './analytics.svelte'
-import type { CityStatus, LineInfo, LineView, Live, Plan, StationInfo, StopInfo, VehicleType } from './types'
+import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, StopInfo, VehicleType } from './types'
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
 //   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
+//   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
 // Old /zastavka/<stop id> links are mapped to the stop's station by the station panel.
 export type View =
   | { kind: 'none' }
@@ -11,6 +12,7 @@ export type View =
   | { kind: 'vehicle'; key: string }
   | { kind: 'station'; code: string; stop: string | null }
   | { kind: 'plan'; from: string | null; to: string | null; at: string | null; opt: number | null }
+  | { kind: 'reach'; from: string | null; at: string | null; min: number }
   | { kind: 'status' }
   | { kind: 'lines' }
   | { kind: 'filters' }
@@ -42,6 +44,8 @@ class AppState {
   stations = $state.raw<Record<string, StationInfo>>({})
   /** The last plan response, kept while a vehicle opened from it is shown so "back" is instant. */
   plan = $state.raw<{ query: string; data: Plan | null; error: string | null; loading: boolean } | null>(null)
+  /** The last reachability response, for the panel and the map. */
+  reach = $state.raw<{ query: string; data: Reach | null; error: string | null; loading: boolean } | null>(null)
   /** The planner field the next map tap fills, while "Vybrať na mape" is on. */
   pick = $state.raw<'from' | 'to' | null>(null)
   /** Display names of coordinate points ("Moja poloha", "Bod na mape"), keyed by the "lat,lon" value. */
@@ -78,6 +82,10 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'trasa') {
     const n = parseInt(q.get('moznost') ?? '', 10)
     view = { kind: 'plan', from: q.get('z'), to: q.get('do'), at: q.get('cas'), opt: n >= 1 ? n - 1 : null }
+  }
+  else if (parts[0] === 'dostupnost') {
+    const min = parseInt(q.get('min') ?? '', 10)
+    view = { kind: 'reach', from: q.get('z'), at: q.get('cas'), min: [30, 45, 60].includes(min) ? min : 30 }
   }
   else if (parts[0] === 'stav') view = { kind: 'status' }
   else if (parts[0] === 'linky') view = { kind: 'lines' }
@@ -117,6 +125,12 @@ export function buildUrl(view: View, filters: Filters): string {
       if (view.to) q.set('do', view.to)
       if (view.at) q.set('cas', view.at)
       if (view.opt != null) q.set('moznost', String(view.opt + 1))
+      break
+    case 'reach':
+      path = '/dostupnost'
+      if (view.from) q.set('z', view.from)
+      if (view.at) q.set('cas', view.at)
+      if (view.min !== 30) q.set('min', String(view.min))
       break
     case 'status':
       path = '/stav'

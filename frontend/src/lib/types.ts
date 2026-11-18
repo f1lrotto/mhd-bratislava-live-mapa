@@ -269,3 +269,15 @@ export interface CityStatus {
     baseline: Record<string, number> | null
   } | null
 }
+
+/** /api/reach: the stops public transport gets to within `limit` seconds of leaving `origin` at
+ * `depart`, each [lon, lat, seconds of its earliest arrival]. Walking on from them is at
+ * `walk.speed` m/s along `walk.detour` × the crow-fly distance, at most `walk.maxM` crow-fly. */
+export interface Reach {
+  origin: { lat: number; lon: number; name: string | null; station: string | null }
+  depart: string
+  limit: number
+  live: boolean
+  walk: { speed: number; detour: number; maxM: number }
+  stops: [number, number, number][]
+}
