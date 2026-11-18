@@ -10,6 +10,9 @@ button). The backend starts it as a child process on 127.0.0.1
 (`mhd/accounts.py`) and forwards `/api/auth/*` to it; the frontend's side is
 `src/lib/profile.svelte.ts`.
 
+The "Čo je nové" panel (`/novinky`) shows `frontend/CHANGELOG.md`, a changelog written by hand in Slovak (its
+format is at the top of the file); it is not generated from git history.
+
 ## Checks
 
 - Backend: `cd backend && uv run pytest -q`
@@ -63,12 +66,15 @@ Production is https://mhd.filiphupka.com: Railway project `mhd-nazivo`
 
 ## Shipping
 
-1. Commit the work in logical commits, rebase onto `origin/main`, and run the checks above.
-2. Push to `main` (never force-push).
-3. Follow CI for the pushed commit and fix failures your change caused.
-4. With the Railway tools, find the deployment for the pushed commit in the project above and follow
+1. When the work is something visitors will notice (a new feature or a visible change, not a fix or
+   internals), add an entry to `frontend/CHANGELOG.md` in the same push: at the top, under today's
+   date, written in Slovak for visitors, in the format at the top of that file.
+2. Commit the work in logical commits, rebase onto `origin/main`, and run the checks above.
+3. Push to `main` (never force-push).
+4. Follow CI for the pushed commit and fix failures your change caused.
+5. With the Railway tools, find the deployment for the pushed commit in the project above and follow
    it to SUCCESS (WAITING while CI runs; SKIPPED if CI failed; FAILED or CRASHED needs its build or
    deploy logs). Then check `https://mhd.filiphupka.com/api/status`: `feed.down` is false,
    `feed.polledAt` is under a minute old and `vehicles` is above zero (at night, few vehicles run), and
    `https://mhd.filiphupka.com/api/auth/profile` answers 200 (the accounts server is up).
-5. Report the commit, CI result, deployment status and the live check.
+6. Report the commit, CI result, deployment status and the live check.

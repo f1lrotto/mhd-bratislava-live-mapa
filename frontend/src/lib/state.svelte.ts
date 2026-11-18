@@ -3,7 +3,7 @@ import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, SpeedData, Spee
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
 //   /linka/83?smer=1   /linka/83/spolahlivost?smer=1&dni=vikendy   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
-//   /oblubene (the signed-in user's favourites)   /ucet (sign-in, sign-up and the account)
+//   /oblubene (the signed-in user's favourites)   /ucet (sign-in, sign-up and the account)   /novinky (what's new, lib/news.svelte.ts)
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 //   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
 //   /blizko (departures near the user; the position is never in the URL, so a shared link locates its opener)
@@ -25,6 +25,7 @@ export type View =
   | { kind: 'replay'; at: string | null }
   | { kind: 'favorites' }
   | { kind: 'account' }
+  | { kind: 'news' }
 
 export interface Filters {
   types: VehicleType[] // empty = all
@@ -91,7 +92,7 @@ export const app = new AppState()
 const TYPE_PARAM: Record<string, VehicleType> = { autobus: 'bus', trolejbus: 'trolleybus', elektricka: 'tram' }
 const TYPE_NAME: Record<VehicleType, string> = { bus: 'autobus', trolleybus: 'trolejbus', tram: 'elektricka', other: 'ine' }
 
-export function parseUrl(loc: Location = location): { view: View; filters: Filters; speed: SpeedOverlay | null } {
+export function parseUrl(loc: Pick<Location, 'pathname' | 'search'> = location): { view: View; filters: Filters; speed: SpeedOverlay | null } {
   const parts = loc.pathname.split('/').filter(Boolean).map(decodeURIComponent)
   const q = new URLSearchParams(loc.search)
   let view: View = { kind: 'none' }
@@ -116,6 +117,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'zaznam') view = { kind: 'replay', at: q.get('cas') }
   else if (parts[0] === 'oblubene') view = { kind: 'favorites' }
   else if (parts[0] === 'ucet') view = { kind: 'account' }
+  else if (parts[0] === 'novinky') view = { kind: 'news' }
   const list = (k: string) => (q.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   const sp = q.get('rychlost')
   const speed: SpeedOverlay | null =
@@ -193,6 +195,9 @@ export function buildUrl(view: View, filters: Filters, speed: SpeedOverlay | nul
       break
     case 'account':
       path = '/ucet'
+      break
+    case 'news':
+      path = '/novinky'
       break
   }
   if (filters.types.length) q.set('typ', filters.types.map((t) => TYPE_NAME[t]).join(','))

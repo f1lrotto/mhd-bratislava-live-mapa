@@ -2,7 +2,7 @@
   import { ANALYTICS, consent, OPTED_OUT, setConsent } from '../lib/analytics.svelte'
   import Panel from './Panel.svelte'
 
-  // Keep this text true to what the app does: lib/analytics.svelte.ts, InstallPrompt (install-dismissed),
+  // Keep this text true to what the app does: lib/analytics.svelte.ts, InstallPrompt (install-dismissed), lib/news.svelte.ts (news-seen),
   // sw.js, the planner ("Moja poloha"), near me (lib/nearby.svelte.ts), the map tiles (Map.svelte), the hosting
   // (AGENTS.md) and the accounts (auth/server.js, auth/profile.js, auth/mail.js, lib/profile.svelte.ts).
 </script>
@@ -103,6 +103,7 @@
     <ul>
       <li>vašu voľbu v tomto okne (<code>analytics-consent</code>, <code>__ph_opt_in_out_…</code>),</li>
       <li>že ste zavreli ponuku pridať aplikáciu na plochu (<code>install-dismissed</code>, 14 dní),</li>
+      <li>koľko noviniek v okne Čo je nové ste už videli (<code>news-seen</code>), aby sme vás upozornili len na nové,</li>
       <li>súbory aplikácie v pamäti prehliadača (service worker), aby sa nainštalovaná aplikácia otvorila aj offline,</li>
       <li>ak ste prihlásení, cookie relácie (<code>__Secure-better-auth.session_token</code>), aby ste zostali prihlásení.</li>
       <li>

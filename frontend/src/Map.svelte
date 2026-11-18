@@ -8,6 +8,7 @@
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { here, openNearby } from './lib/nearby.svelte'
+  import { unread } from './lib/news.svelte'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { REACH_COLORS, reachBands, reachShapes } from './lib/reach'
   import { frame, replay } from './lib/replay.svelte'
@@ -433,6 +434,26 @@
     },
     onRemove() {
       speedButton.parentElement?.remove()
+    },
+  }
+
+  /** "Čo je nové" in the bottom-right corner, out of the way; a dot marks entries not seen yet. */
+  const newsButton = document.createElement('button')
+  newsButton.type = 'button'
+  newsButton.className = 'news-toggle'
+  newsButton.title = 'Čo je nové'
+  newsButton.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>'
+  newsButton.onclick = () => (app.view.kind === 'news' ? closePanel() : navigate({ kind: 'news' }))
+  const newsControl: maplibregl.IControl = {
+    onAdd() {
+      const div = document.createElement('div')
+      div.className = 'maplibregl-ctrl maplibregl-ctrl-group'
+      div.append(newsButton)
+      return div
+    },
+    onRemove() {
+      newsButton.parentElement?.remove()
     },
   }
 
@@ -1096,6 +1117,8 @@
       }),
       'bottom-right',
     )
+    // Bottom controls stack upwards: this one sits above the attribution.
+    m.addControl(newsControl, 'bottom-right')
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     m.addControl(locateControl, 'top-right')
     m.addControl(speedControl, 'top-right')
@@ -1279,6 +1302,13 @@
     fittedReach = q
     const [[w, s], [e, n]] = shapes.bounds
     untrack(() => requestAnimationFrame(() => fitCoords([[w, s], [e, n]])))
+  })
+
+  $effect(() => {
+    const isNew = unread()
+    newsButton.classList.toggle('unread', isNew)
+    newsButton.ariaLabel = isNew ? 'Čo je nové (nové novinky)' : 'Čo je nové'
+    newsButton.setAttribute('aria-pressed', String(app.view.kind === 'news'))
   })
 
   $effect(() => {

@@ -162,6 +162,37 @@ input:focus-visible {
   font-family: inherit;
 }
 
+/* The "Čo je nové" map button (Map.svelte), with a dot while there are unseen entries. */
+.maplibregl-ctrl-group button.news-toggle {
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: var(--text);
+}
+.news-toggle svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.news-toggle.unread::after {
+  content: '';
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.maplibregl-ctrl-group button.news-toggle[aria-pressed='true'] {
+  background: var(--text);
+  color: #fff;
+}
+
 /* The speed overlay's map button (Map.svelte). */
 .maplibregl-ctrl-group button.speed-toggle {
   display: grid;

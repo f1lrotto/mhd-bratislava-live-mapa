@@ -10,6 +10,7 @@
   import StatusPanel from './components/StatusPanel.svelte'
   import PlanPanel from './components/PlanPanel.svelte'
   import NearbyPanel from './components/NearbyPanel.svelte'
+  import NewsPanel from './components/NewsPanel.svelte'
   import PrivacyPanel from './components/PrivacyPanel.svelte'
   import ReachPanel from './components/ReachPanel.svelte'
   import ReliabilityPanel from './components/ReliabilityPanel.svelte'
@@ -274,6 +275,8 @@
       <FavoritesPanel />
     {:else if app.view.kind === 'account'}
       <AccountPanel />
+    {:else if app.view.kind === 'news'}
+      <NewsPanel />
     {/if}
   {/key}
 
