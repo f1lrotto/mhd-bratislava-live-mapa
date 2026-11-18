@@ -9,7 +9,7 @@
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { here, openNearby } from './lib/nearby.svelte'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
-  import { reachBands, reachShapes } from './lib/reach'
+  import { REACH_COLORS, reachBands, reachShapes } from './lib/reach'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
@@ -419,6 +419,48 @@
       },
       firstLabel,
     )
+    // Stations reached in time, by band; a tap plans the trip there. Each shows from its zoom
+    // (minz, see reachStations): zoomed out only the stations most lines pass.
+    m.addLayer(
+      {
+        id: 'reach-stops',
+        type: 'circle',
+        source: 'reach',
+        filter: ['all', ['has', 'station'], ['<=', ['get', 'minz'], 9]],
+        layout: { 'circle-sort-key': ['-', 0, ['get', 't']] },
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 13, 5, 16, 8],
+          'circle-color': ['get', 'color'],
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 14, 2],
+        },
+      },
+      firstLabel,
+    )
+    m.addLayer({
+      id: 'reach-stops-label',
+      type: 'symbol',
+      source: 'reach',
+      filter: ['all', ['has', 'station'], ['<=', ['get', 'minz'], 9]],
+      minzoom: 13,
+      layout: {
+        'text-field': ['get', 'label'],
+        'text-font': ['Noto Sans Bold'],
+        'text-size': 11,
+        'text-anchor': 'left',
+        'text-offset': [0.9, 0],
+        'text-optional': true,
+        'symbol-sort-key': ['get', 'rank'],
+      },
+      paint: { 'text-color': '#2a2180', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+    })
+    const showReachStops = () => {
+      const f = ['all', ['has', 'station'], ['<=', ['get', 'minz'], Math.floor(m.getZoom())]] as any
+      m.setFilter('reach-stops', f)
+      m.setFilter('reach-stops-label', f)
+    }
+    m.on('zoom', showReachStops)
+    showReachStops()
     m.addLayer({
       id: 'reach-origin',
       type: 'circle',
@@ -854,7 +896,11 @@
         return
       }
       if (app.view.kind === 'reach') {
-        // Over the reachability map, a tap starts it there: at a station, or at the point.
+        // A reached station opens the trip there (back returns to the map); a tap anywhere else
+        // starts the reachability map there: at a station, or at the point.
+        const v = app.view
+        const hit = m.queryRenderedFeatures(box(e.point, r), { layers: ['reach-stops'] })[0]
+        if (hit && v.from) return navigate({ kind: 'plan', from: v.from, to: String(hit.properties.station), at: v.at, opt: null })
         const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
         const code = f && String(f.properties.station ?? f.properties.code ?? '')
         if (code && app.stations[code]) setPlanEnd('from', code)
@@ -876,7 +922,7 @@
       if (rl && app.view.kind === 'line') return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
       if (app.view.kind === 'vehicle' || app.view.kind === 'station') closePanel()
     })
-    for (const layer of ['veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
+    for (const layer of ['reach-stops', 'veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
       m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'))
       m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''))
     }
@@ -1021,6 +1067,52 @@
   })
 
 
+  /** Reached stations as map points, each with the zoom it shows from (minz): from zoom 9 up, a
+   * station shows when no station shown before it is within REACH_GAP_PX, taking the stations most
+   * lines pass first, then the earliest. A station once shown stays at every higher zoom. */
+  const REACH_GAP_PX = 22
+  function reachStations(best: Map<string, number>, bands: number[]) {
+    const items = [...best].flatMap(([code, t]) => {
+      const st = app.stations[code]
+      const b = bands.findIndex((x) => t <= x * 60)
+      return st && b >= 0 ? [{ code, t, b, st, x: st.lon * 111_320 * Math.cos((st.lat * Math.PI) / 180), y: st.lat * 110_574, minz: 99 }] : []
+    })
+    items.sort((a, b) => b.st.lines.length - a.st.lines.length || a.t - b.t)
+    const shown: typeof items = []
+    for (let z = 9; z <= 16; z++) {
+      const gap = (REACH_GAP_PX * 40_075_016 * Math.cos((48.15 * Math.PI) / 180)) / (512 * 2 ** z) // metres
+      const grid = new Map<string, typeof items>()
+      const cellOf = (it: (typeof items)[number]) => [Math.floor(it.x / gap), Math.floor(it.y / gap)]
+      const add = (it: (typeof items)[number]) => {
+        const [cx, cy] = cellOf(it)
+        const k = `${cx},${cy}`
+        grid.set(k, [...(grid.get(k) ?? []), it])
+      }
+      for (const it of shown) add(it)
+      for (const it of items) {
+        if (it.minz <= 16 && it.minz < z) continue
+        const [cx, cy] = cellOf(it)
+        let free = z === 16 // everything from zoom 16
+        if (!free) {
+          free = true
+          for (let dx = -1; dx <= 1 && free; dx++)
+            for (let dy = -1; dy <= 1 && free; dy++)
+              for (const o of grid.get(`${cx + dx},${cy + dy}`) ?? []) if (Math.hypot(o.x - it.x, o.y - it.y) < gap) free = false
+        }
+        if (free) {
+          it.minz = z
+          shown.push(it)
+          add(it)
+        }
+      }
+    }
+    return items.map((it, i) => ({
+      type: 'Feature' as const,
+      geometry: { type: 'Point' as const, coordinates: [it.st.lon, it.st.lat] },
+      properties: { station: it.code, t: it.t, minz: it.minz, rank: i, color: REACH_COLORS[it.b], label: `${Math.max(1, Math.round(it.t / 60))} min` },
+    }))
+  }
+
   // The reachability map: its bands, fitted once per starting point, time and limit.
   let fittedReach: string | null = null
   $effect(() => {
@@ -1029,8 +1121,16 @@
     if (!loaded || !map) return
     const q = v.kind === 'reach' ? reachQuery(v.from, v.at, v.min) : null
     const data = q && r?.query === q ? r.data : null
-    const shapes = data && v.kind === 'reach' ? reachShapes(data, reachBands(v.min)) : null
-    ;(map.getSource('reach') as GeoJSONSource).setData({ type: 'FeatureCollection', features: shapes?.features ?? [] })
+    const bands = v.kind === 'reach' ? reachBands(v.min) : []
+    const shapes = data ? reachShapes(data, bands) : null
+    // Per station, its earliest platform; not the start itself.
+    const best = new Map<string, number>()
+    for (const [, , t, id] of data?.stops ?? []) {
+      const code = app.stops[id]?.station
+      if (code && code !== data!.origin.station && t < (best.get(code) ?? Infinity)) best.set(code, t)
+    }
+    const stations = reachStations(best, bands)
+    ;(map.getSource('reach') as GeoJSONSource).setData({ type: 'FeatureCollection', features: [...(shapes?.features ?? []), ...stations] })
     if (!q) fittedReach = null
     if (!shapes?.bounds || fittedReach === q) return
     fittedReach = q

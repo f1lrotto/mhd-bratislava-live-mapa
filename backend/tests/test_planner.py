@@ -275,7 +275,7 @@ def test_api_plan_takes_a_naive_time_as_bratislava_and_gives_a_reason(tmp_path, 
             "options": [], "reason": "same_place", "live": True}
         body = c.get("/api/reach", params={"from": "1", "at": "2026-11-16T07:55", "min": 20}).json()
         assert body["depart"] == iso(7, 55) and body["limit"] == 1200 and body["live"] is False
-        assert [*(round(v, 5) for v in ll(5000)), 900] in body["stops"]  # B at 08:10
+        assert [*(round(v, 5) for v in ll(5000)), 900, "B"] in body["stops"]  # B at 08:10
 
 
 def test_late_feeder_puts_the_transfer_at_risk_and_tracking_shows_it_missed(tmp_path):
@@ -388,8 +388,8 @@ def test_reach_gives_the_earliest_arrival_at_every_stop_within_the_limit(tmp_pat
 
     def times(limit_min, delays=None):
         res = p.reach({"station": "1"}, at(8, 0), limit_min * 60, delays)
-        got = {(lon, lat): t for lon, lat, t in res["stops"]}
-        return {s: got[key(s)] for s in stops if key(s) in got}
+        assert all((lon, lat) == key(s) for lon, lat, _, s in res["stops"])
+        return {s: t for _, _, t, s in res["stops"]}
 
     assert times(30) == {"A": 0, "B": 600, "C": 900, "D": 900 + walk_seconds(200)}
     assert times(45)["E"] == 2400

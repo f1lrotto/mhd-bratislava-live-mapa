@@ -148,7 +148,7 @@
       Z miesta {placeLabel(from)} {at ? `o ${hm(at)}` : 'teraz'}{reach.data.live ? ', s aktuálnym meškaním' : ''}: pešo
       k zastávke, MHD s prestupmi a pešo k cieľu (najviac 2 km vzdušnou čiarou).
     </p>
-    <p class="note">Ťuknite na mapu a začnite inde.</p>
+    <p class="note">Ťuknite na zvýraznenú zastávku a ukážeme vám spojenie k nej. Inde na mape začnete odtiaľ.</p>
     {#if reach.error}<p class="note error">Obnovenie zlyhalo, ukazujeme posledný výsledok.</p>{/if}
   {/if}
 </Panel>

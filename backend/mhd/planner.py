@@ -763,7 +763,7 @@ class Planner:
 
     def reach(self, origin: dict, depart: datetime, limit_s: int, delays: dict[str, int] | None = None) -> dict:
         """Everywhere the network gets to within limit_s of leaving origin at depart (one search to
-        all stops): the origin as a point, and per stop reached [lon, lat, seconds after depart] of
+        all stops): the origin as a point, and per stop reached [lon, lat, seconds after depart, stop id] of
         its earliest arrival, by vehicle or on foot. Walking on from the stops is the caller's, at
         walk_seconds pace."""
         if depart.tzinfo is None:
@@ -779,7 +779,7 @@ class Planner:
             t = min(a, r)
             if t < t0 + limit_s:
                 lon, lat = self.stop_ll[s]
-                stops.append([round(lon, 5), round(lat, 5), int(t - t0)])
+                stops.append([round(lon, 5), round(lat, 5), int(t - t0), self.stop_ids[s]])
         return {"origin": o_pt, "stops": stops}
 
     def _rides(self, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
