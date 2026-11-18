@@ -6,6 +6,7 @@ import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, St
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 //   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
 //   /blizko (departures near the user; the position is never in the URL, so a shared link locates its opener)
+//   /zaznam?cas=<ISO>   the map replayed at a past instant (replay.svelte.ts)
 // Old /zastavka/<stop id> links are mapped to the stop's station by the station panel.
 export type View =
   | { kind: 'none' }
@@ -19,6 +20,7 @@ export type View =
   | { kind: 'lines' }
   | { kind: 'filters' }
   | { kind: 'privacy' }
+  | { kind: 'replay'; at: string | null }
 
 export interface Filters {
   types: VehicleType[] // empty = all
@@ -94,6 +96,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'linky') view = { kind: 'lines' }
   else if (parts[0] === 'filtre') view = { kind: 'filters' }
   else if (parts[0] === 'sukromie') view = { kind: 'privacy' }
+  else if (parts[0] === 'zaznam') view = { kind: 'replay', at: q.get('cas') }
   const list = (k: string) => (q.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   return {
     view,
@@ -149,6 +152,10 @@ export function buildUrl(view: View, filters: Filters): string {
       break
     case 'privacy':
       path = '/sukromie'
+      break
+    case 'replay':
+      path = '/zaznam'
+      if (view.at) q.set('cas', view.at)
       break
   }
   if (filters.types.length) q.set('typ', filters.types.map((t) => TYPE_NAME[t]).join(','))

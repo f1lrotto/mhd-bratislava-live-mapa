@@ -10,6 +10,7 @@
   import NearbyPanel from './components/NearbyPanel.svelte'
   import PrivacyPanel from './components/PrivacyPanel.svelte'
   import ReachPanel from './components/ReachPanel.svelte'
+  import ReplayPanel from './components/ReplayPanel.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
@@ -97,11 +98,12 @@
   // On phones the nav buttons sit in a menu behind a burger button.
   let menuOpen = $state(false)
 
-  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan' | 'reach') {
+  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan' | 'reach' | 'replay') {
     menuOpen = false
     if (app.view.kind === kind) closePanel()
     else if (kind === 'plan') navigate({ kind, from: null, to: null, at: null, opt: null })
     else if (kind === 'reach') navigate({ kind, from: null, at: null, min: 30 })
+    else if (kind === 'replay') navigate({ kind, at: null })
     else navigate({ kind })
   }
 
@@ -119,10 +121,18 @@
       <img class="logo" src="/favicon.svg" alt="" width="22" height="22" />
       <span class="brand-text">MHD <b>naživo</b></span>
     </button>
-    <div class="fresh" class:bad={down} title="Kedy server naposledy načítal polohy z DPB">
-      <span class="pulse" aria-hidden="true"></span>
-      <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
-    </div>
+    {#if app.view.kind === 'replay'}
+      <!-- The map shows the past: no live freshness. -->
+      <div class="fresh rec" title="Mapa prehráva záznam, nie živé polohy">
+        <span class="pulse" aria-hidden="true"></span>
+        <span class="fresh-text">Záznam</span>
+      </div>
+    {:else}
+      <div class="fresh" class:bad={down} title="Kedy server naposledy načítal polohy z DPB">
+        <span class="pulse" aria-hidden="true"></span>
+        <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
+      </div>
+    {/if}
     <button class="burger" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="menu" aria-label="Menu">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d={menuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 7h16M4 12h16M4 17h16'} />
@@ -151,11 +161,15 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M12 19V5M19 19v-6" /></svg>
         <span>Stav</span>
       </button>
+      <button class:active={app.view.kind === 'replay'} onclick={() => toggle('replay')} aria-pressed={app.view.kind === 'replay'} aria-label="Záznam jázd">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></svg>
+        <span>Záznam</span>
+      </button>
     </nav>
   </header>
   {#if menuOpen}<div class="menu-backdrop" onpointerdown={() => (menuOpen = false)} aria-hidden="true"></div>{/if}
 
-  {#if down || (app.fetchError && !app.live) || staticError}
+  {#if (app.view.kind !== 'replay' && (down || (app.fetchError && !app.live))) || staticError}
     <div class="banner" role="alert">
       {#if staticError}
         Nepodarilo sa načítať linky a zastávky ({staticError}).
@@ -204,6 +218,8 @@
       <FiltersPanel />
     {:else if app.view.kind === 'privacy'}
       <PrivacyPanel />
+    {:else if app.view.kind === 'replay'}
+      <ReplayPanel at={app.view.at} />
     {/if}
   {/key}
 
@@ -271,6 +287,15 @@
   .fresh.bad {
     color: var(--bad-text);
     font-weight: 600;
+  }
+  .fresh.rec {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .fresh.rec .pulse {
+    border-radius: 2px;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(20, 110, 255, 0.2);
   }
   .fresh.bad .pulse {
     background: var(--bad);

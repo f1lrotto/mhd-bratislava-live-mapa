@@ -10,6 +10,7 @@
   import { here, openNearby } from './lib/nearby.svelte'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { REACH_COLORS, reachBands, reachShapes } from './lib/reach'
+  import { frame, replay } from './lib/replay.svelte'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
@@ -87,19 +88,21 @@
 
   function render(t: number): void {
     const src = map?.getSource('vehicles') as GeoJSONSource | undefined
-    const live = app.live
-    if (!src || !live) return
-    const down = feedDown()
-    const rDown = regionalDown()
     const view = app.view
-    const selKey = view.kind === 'vehicle' ? view.key : null
+    // In replay, the fleet at the replayed instant, already in place; the feed's state is today's.
+    const rp = view.kind === 'replay'
+    const vehicles = rp ? frame(replay.t) : app.live?.vehicles
+    if (!src || !vehicles) return
+    const down = !rp && feedDown()
+    const rDown = !rp && regionalDown()
+    const selKey = view.kind === 'vehicle' ? view.key : rp ? replay.sel : null
     const features = []
-    for (const v of live.vehicles) {
+    for (const v of vehicles) {
       const sel = v.key === selKey
       // The planned trip's vehicles: always shown, enlarged and tagged.
       const mine = planKeys?.has(v.key) ?? false
       if (!sel && !mine && !passes(v, app.filters)) continue
-      const p = at(v.key, t) ?? [v.lon, v.lat]
+      const p = (!rp && at(v.key, t)) || [v.lon, v.lat]
       // Over the reachability map, vehicles fade so its bands read.
       const dim = (activeLine != null && v.line !== activeLine && !sel) || (planKeys != null && !mine && !sel) || view.kind === 'reach'
       // On the active line, vehicles of the other directions stay visible but softer.
@@ -909,6 +912,11 @@
       }
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
       const v = vs.find((f) => !f.properties.dim) ?? vs[0]
+      // In replay a tap picks a vehicle to follow in the replay panel; the vehicle panel is live.
+      if (app.view.kind === 'replay') {
+        replay.sel = v ? String(v.properties.key) : null
+        return
+      }
       if (v) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
       const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['plan-stops', 'route-stops', 'stops', 'near', 'stations', 'station-sel'] })[0]
       if (s) {
@@ -980,6 +988,12 @@
   $effect(() => {
     const live = app.live
     if (loaded && live) untrack(() => onLive(live))
+  })
+
+  // The replayed instant moved or its chunk arrived.
+  $effect(() => {
+    void [replay.t, replay.loaded, replay.sel]
+    if (loaded && app.view.kind === 'replay') untrack(() => render(1))
   })
 
   // Filters, selection, the active line or feed state changed: redraw at the current frame.
