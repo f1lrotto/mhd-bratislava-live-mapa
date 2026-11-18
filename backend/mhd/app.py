@@ -34,6 +34,7 @@ from .history import History
 from .logger import PollLogger
 from .planner import DETOUR, MAX_RIDES, WALK_ONLY_M, WALK_SPEED, Planner
 from .poller import Poller
+from .reliability import KINDS, Reliability
 from .static import TZ, Static
 from .stopevents import StopEventTracker
 
@@ -82,6 +83,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         return state["static"]
 
     history = History(DATA_DIR / "logs")
+    reliability = Reliability(DATA_DIR / "history")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -297,6 +299,20 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             return JSONResponse({"error": f"unknown line {line}"}, status_code=404)
         view["feed"] = derive.feed_status(snap, now)
         return JSONResponse(view, headers=no_store)
+
+    @app.get("/api/line/{line}/reliability")
+    def line_reliability(line: str, days: str = "workdays"):
+        """Delays by stop and hour over the last weeks (reliability.py); days: workdays or weekends."""
+        static = current_static()
+        if static is None:
+            return JSONResponse({"error": "static data not built"}, status_code=503)
+        if days not in KINDS:
+            return JSONResponse({"error": f"days must be one of {', '.join(KINDS)}"}, status_code=400)
+        body = reliability.get(static, line, days)
+        if body is None:
+            return JSONResponse({"error": f"unknown line {line}"}, status_code=404)
+        # It only changes when the nightly retention keeps another day.
+        return JSONResponse(body, headers={"Cache-Control": "max-age=600"})
 
     @app.get("/api/status")
     def status():
