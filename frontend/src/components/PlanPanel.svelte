@@ -4,7 +4,8 @@
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayBand, delayText, durationText, fromLocalInput, hm, isRegional, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
   import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
-  import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
+  import { routeOverlay } from '../lib/speeds'
+  import { app, navigate, setSpeed, SLOW_POLL_MS } from '../lib/state.svelte'
   import type { FallbackOption, PlanOption, PlanReason, RideLeg } from '../lib/types'
   import DepartPicker from './DepartPicker.svelte'
   import LineBadge from './LineBadge.svelte'
@@ -398,6 +399,13 @@
       {#if sel.tracked}<span class="tracked small" title="Toto spojenie sledujeme naživo, aj keď už nie je medzi novými možnosťami."
           ><span class="live-dot" aria-hidden="true"></span>Sledované naživo</span
         >{/if}
+      {#if rides(sel).length}
+        <!-- The speed overlay on this option's rides only, at the time it leaves. -->
+        <button class="speed-btn" aria-pressed={app.speed != null} onclick={() => setSpeed(app.speed ? null : routeOverlay(sel, now))}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 17a8 8 0 1 1 15 0" /><path d="M12 15l3.5-5" /></svg>
+          {app.speed ? 'Skryť rýchlosť na trase' : 'Rýchlosť jazdy na trase'}
+        </button>
+      {/if}
     </div>
     {#if riskLeg(sel)}
       {@const rl = riskLeg(sel)!}
@@ -897,6 +905,34 @@
   }
   .nowrap {
     white-space: nowrap;
+  }
+  .speed-btn {
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 6px 12px;
+    min-height: 36px;
+    border-radius: 9px;
+    background: var(--chip);
+    font-weight: 600;
+    font-size: 0.88rem;
+  }
+  .speed-btn:hover {
+    background: var(--hover);
+  }
+  .speed-btn[aria-pressed='true'] {
+    background: var(--text);
+    color: #fff;
+  }
+  .speed-btn svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.2;
+    stroke-linecap: round;
   }
   .tracked {
     display: inline-flex;

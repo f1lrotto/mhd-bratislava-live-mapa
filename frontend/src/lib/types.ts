@@ -316,3 +316,28 @@ export interface LineReliability {
   summary: ReliabilitySummary
   directions: ReliabilityDirection[]
 }
+
+/** A hop between two consecutive stops ("from stop id>to stop id"), timed by the trips that ran it. */
+export interface SpeedHop {
+  k: string
+  /** Runs measured. */
+  n: number
+  /** Mean actual and scheduled time between the stops, seconds. */
+  a: number
+  s: number
+  /** Actual over scheduled time (above 1: slower than the timetable), damped for few runs. */
+  r: number
+}
+
+export type SpeedData =
+  | { view: 'live'; windowS: number; hops: SpeedHop[] }
+  | { view: 'typical'; kind: 'workday' | 'saturday' | 'sunday'; days: number; from: string; to: string; hops: SpeedHop[] }
+
+/** The overlay's map: each hop's length in metres and the lines that run it, and the road split
+ * into segments, each with the hops (indices into `hops`) that run it. A street is one segment per
+ * direction however many hops use it. */
+export interface SpeedGeometry {
+  hops: { k: string; m: number; lines: string[] }[]
+  /** o: only regional hops run it, along a DPB street that already shows; left out of the network view. */
+  segments: { c: [number, number][]; h: number[]; o?: boolean }[]
+}

@@ -1,5 +1,5 @@
 import { track } from './analytics.svelte'
-import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, StopInfo, VehicleType } from './types'
+import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, SpeedData, SpeedGeometry, StationInfo, StopInfo, VehicleType } from './types'
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
 //   /linka/83?smer=1   /linka/83/spolahlivost?smer=1&dni=vikendy   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
@@ -30,6 +30,10 @@ export interface Filters {
   regional: boolean // IDS BK regional buses shown (they don't count as DPB's buses in `types`)
   parked: boolean // parked vehicles shown (see `isParked`)
 }
+
+/** The speed overlay: the last half hour, or typical runs at `at` (HH:MM, null = now).
+ * In the URL as ?rychlost=teraz, ?rychlost=bezne or ?rychlost=07:30. */
+export type SpeedOverlay = { view: 'live' } | { view: 'typical'; at: string | null }
 
 export const POLL_MS = 15_000
 /** For views that change slowly (city status, journey plans). */
@@ -64,6 +68,13 @@ class AppState {
   lineView = $state.raw<LineView | null>(null)
   lineViewError = $state.raw<string | null>(null)
   status = $state.raw<CityStatus | null>(null)
+  speed = $state.raw<SpeedOverlay | null>(null)
+  speedGeometry = $state.raw<SpeedGeometry | null>(null)
+  /** The last speeds loaded for the overlay; kept on screen while another view or time loads. */
+  speedData = $state.raw<SpeedData | null>(null)
+  speedError = $state.raw<string | null>(null)
+  /** The hop tapped on the map ("from>to"). */
+  speedHop = $state.raw<string | null>(null)
   /** Set when the user asks to centre the map on something (a ribbon tap, a deep link). */
   focus = $state.raw<{ lon: number; lat: number; zoom?: number; seq: number } | null>(null)
   /** Updated every second so relative times re-render. */
@@ -77,7 +88,7 @@ export const app = new AppState()
 const TYPE_PARAM: Record<string, VehicleType> = { autobus: 'bus', trolejbus: 'trolleybus', elektricka: 'tram' }
 const TYPE_NAME: Record<VehicleType, string> = { bus: 'autobus', trolleybus: 'trolejbus', tram: 'elektricka', other: 'ine' }
 
-export function parseUrl(loc: Location = location): { view: View; filters: Filters } {
+export function parseUrl(loc: Location = location): { view: View; filters: Filters; speed: SpeedOverlay | null } {
   const parts = loc.pathname.split('/').filter(Boolean).map(decodeURIComponent)
   const q = new URLSearchParams(loc.search)
   let view: View = { kind: 'none' }
@@ -101,8 +112,15 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'sukromie') view = { kind: 'privacy' }
   else if (parts[0] === 'zaznam') view = { kind: 'replay', at: q.get('cas') }
   const list = (k: string) => (q.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
+  const sp = q.get('rychlost')
+  const speed: SpeedOverlay | null =
+    sp === 'teraz' ? { view: 'live' }
+    : sp === 'bezne' ? { view: 'typical', at: null }
+    : sp && /^([01]\d|2[0-3]):[0-5]\d$/.test(sp) ? { view: 'typical', at: sp }
+    : null
   return {
     view,
+    speed,
     filters: {
       types: list('typ').map((t) => TYPE_PARAM[t]).filter(Boolean),
       lines: list('linky'),
@@ -113,7 +131,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   }
 }
 
-export function buildUrl(view: View, filters: Filters): string {
+export function buildUrl(view: View, filters: Filters, speed: SpeedOverlay | null = app.speed): string {
   let path = '/'
   const q = new URLSearchParams()
   switch (view.kind) {
@@ -171,6 +189,7 @@ export function buildUrl(view: View, filters: Filters): string {
   if (filters.late) q.set('meskanie', '1')
   if (!filters.regional) q.set('regionalne', '0')
   if (!filters.parked) q.set('odstavene', '0')
+  if (speed) q.set('rychlost', speed.view === 'live' ? 'teraz' : (speed.at ?? 'bezne'))
   const qs = q.toString().replaceAll('%2C', ',').replaceAll('%3A', ':')
   return qs ? `${path}?${qs}` : path
 }
@@ -194,6 +213,18 @@ export function setFilters(f: Partial<Filters>): void {
   syncUrl(true)
   const n = app.filters
   track('filters_changed', { changed: Object.keys(f), types: n.types, lines: n.lines, late: n.late, regional: n.regional, active: filtersActive(n) })
+}
+
+export function setSpeed(s: SpeedOverlay | null): void {
+  if (!s) {
+    app.speedData = null
+    app.speedError = null
+    app.speedHop = null
+  }
+  // Once per switch to a view, not per move of the time slider.
+  if (s && s.view !== app.speed?.view) track('speed_overlay_opened', { view: s.view })
+  app.speed = s
+  syncUrl(true)
 }
 
 function syncUrl(replace = false, prev?: View['kind']): void {

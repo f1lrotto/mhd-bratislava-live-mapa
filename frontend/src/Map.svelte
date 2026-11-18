@@ -4,14 +4,15 @@
   import 'maplibre-gl/dist/maplibre-gl.css'
   import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
   import { onMount, untrack } from 'svelte'
-  import { planQuery, reachQuery } from './lib/api'
+  import { drawnPlanOption, planQuery, reachQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { here, openNearby } from './lib/nearby.svelte'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { REACH_COLORS, reachBands, reachShapes } from './lib/reach'
   import { frame, replay } from './lib/replay.svelte'
-  import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
+  import { routeHops, SPEED_COLORS, SPEED_STEPS } from './lib/speeds'
+  import { app, closePanel, feedDown, navigate, regionalDown, setSpeed } from './lib/state.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
   let { activeLine, selectedDir }: { activeLine: string | null; selectedDir: string | null } = $props()
@@ -28,12 +29,9 @@
   let loaded = $state(false)
 
   // The planner option drawn on the map: the selected one, or the first while the list shows.
-  const planOpt = $derived.by((): PlanOption | null => {
-    const v = app.view
-    if (v.kind !== 'plan' || !app.plan || app.plan.query !== planQuery(v.from, v.to, v.at)) return null
-    const opts = app.plan.data?.options ?? []
-    return opts.length ? opts[Math.min(v.opt ?? 0, opts.length - 1)] : null
-  })
+  const planOpt = $derived.by((): PlanOption | null => drawnPlanOption())
+  /** With the speed overlay on in the planner, only the drawn option's hops are coloured. */
+  const routeHopKeys = $derived(app.speed && planOpt ? routeHops(planOpt) : null)
   /** Live vehicles of the drawn option's rides; everything else dims. Null outside the planner. */
   const planKeys = $derived.by(() => {
     if (app.view.kind !== 'plan' || !planOpt) return null
@@ -173,8 +171,10 @@
     for (const c of coords) b.extend(c)
     const c = covered()
     const pad = isMobile() ? 36 : 56
+    // The speed card (SpeedCard) sits under the top bar: the route goes below it.
+    const card = document.querySelector('.speed-card')?.getBoundingClientRect().bottom ?? 0
     map.fitBounds(b, {
-      padding: { top: 72 + pad, bottom: c.bottom + pad, left: c.left + pad, right: 56 + pad },
+      padding: { top: Math.max(72, card) + pad, bottom: c.bottom + pad, left: c.left + pad, right: 56 + pad },
       maxZoom: 16,
       duration: 700,
     })
@@ -372,6 +372,70 @@
     })
   }
 
+  // --- speed overlay ----------------------------------------------------------------------------
+  /** Each road segment coloured by the runs of the hops on it: their actual over scheduled time,
+   * damped like a single hop's (speeds.PRIOR_S). On a planned route only the route's hops count,
+   * and its segments without data are grey (r = -1); elsewhere those aren't drawn. A segment's `k`
+   * is the hop a tap opens: the one with the most runs. */
+  function updateSpeeds(): void {
+    if (!map) return
+    const g = app.speedGeometry
+    const d = app.speed ? app.speedData : null
+    const route = routeHopKeys ? new Set(routeHopKeys) : null
+    const runs = new Map((d?.hops ?? []).map((h) => [h.k, h]))
+    const network = []
+    const onRoute = []
+    const sel = []
+    for (const seg of g && d ? g.segments : []) {
+      if (seg.o && !route) continue
+      const keys = seg.h.map((i) => g!.hops[i].k).filter((k) => !route || route.has(k))
+      if (!keys.length) continue
+      let act = 0
+      let sch = 0
+      let k = keys[0]
+      let most = 0
+      for (const key of keys) {
+        const h = runs.get(key)
+        if (!h) continue
+        act += h.n * h.a
+        sch += h.n * h.s
+        if (h.n > most) [k, most] = [key, h.n]
+      }
+      const f = {
+        type: 'Feature' as const,
+        geometry: { type: 'LineString' as const, coordinates: seg.c },
+        properties: { k, r: sch ? (act + 60) / (sch + 60) : -1, sel: app.speedHop != null && keys.includes(app.speedHop) },
+      }
+      if (route) onRoute.push(f)
+      else if (sch) network.push(f)
+      if (!route && f.properties.sel) sel.push(f)
+    }
+    ;(map.getSource('speeds') as GeoJSONSource).setData({ type: 'FeatureCollection', features: network })
+    ;(map.getSource('speed-route') as GeoJSONSource).setData({ type: 'FeatureCollection', features: onRoute })
+    ;(map.getSource('speed-sel') as GeoJSONSource).setData({ type: 'FeatureCollection', features: sel })
+  }
+
+  /** The map button that switches the speed overlay on and off. */
+  const speedButton = document.createElement('button')
+  speedButton.type = 'button'
+  speedButton.className = 'speed-toggle'
+  speedButton.title = speedButton.ariaLabel = 'Rýchlosť jazdy'
+  speedButton.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 15l3.5-5"/><circle cx="12" cy="15.5" r="1.3"/></svg>'
+  // Typical is the default: it covers the whole network at any hour; the live view is one tap away.
+  speedButton.onclick = () => setSpeed(app.speed ? null : { view: 'typical', at: null })
+  const speedControl: maplibregl.IControl = {
+    onAdd() {
+      const div = document.createElement('div')
+      div.className = 'maplibregl-ctrl maplibregl-ctrl-group'
+      div.append(speedButton)
+      return div
+    },
+    onRemove() {
+      speedButton.parentElement?.remove()
+    },
+  }
+
   // --- setup ------------------------------------------------------------------------------------
   const EMPTY = { type: 'FeatureCollection' as const, features: [] }
   const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 10, 0.42, 12, 0.66, 14, 0.88, 16, 1] as any
@@ -396,7 +460,7 @@
   function setup(m: MlMap): void {
     addMarkerImages(m)
     addPinImages(m)
-    for (const id of ['reach', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near'])
+    for (const id of ['reach', 'speeds', 'speed-sel', 'speed-route', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near'])
       m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
@@ -471,6 +535,39 @@
       filter: ['has', 'origin'],
       paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#3a2ea8', 'circle-stroke-width': 4.5 },
     })
+    // The speed overlay, under routes and plans. Each direction of a street sits on its own side
+    // (the right, as traffic drives), so both show; the slowest hop draws on top where they overlap.
+    const SPEED_COLOR = ['step', ['get', 'r'], '#9aa1ab', 0, SPEED_COLORS[0], ...SPEED_STEPS.flatMap((t, i) => [t, SPEED_COLORS[i + 1]])] as any
+    const SPEED_W = ['interpolate', ['linear'], ['zoom'], 10, 2, 13, 3.5, 16, 7] as any
+    const SPEED_OFF = ['interpolate', ['linear'], ['zoom'], 10, 1.2, 13, 2.2, 16, 4] as any
+    m.addLayer(
+      {
+        id: 'speed-sel',
+        type: 'line',
+        source: 'speed-sel',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': '#1d232b',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 13, 8, 16, 12],
+          'line-offset': SPEED_OFF,
+        },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'speed-line',
+        type: 'line',
+        source: 'speeds',
+        layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['get', 'r'] },
+        paint: {
+          'line-color': SPEED_COLOR,
+          'line-width': SPEED_W,
+          'line-offset': SPEED_OFF,
+        },
+      },
+      firstLabel,
+    )
     m.addLayer(
       {
         id: 'route-casing',
@@ -559,6 +656,28 @@
         filter: ['==', ['get', 'kind'], 'ride'],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: { 'line-color': ['get', 'color'], 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10] },
+      },
+      firstLabel,
+    )
+    // The speed overlay on a planned route: over the ride's own line, the tapped hop outlined.
+    m.addLayer(
+      {
+        id: 'speed-route-sel',
+        type: 'line',
+        source: 'speed-route',
+        filter: ['get', 'sel'],
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': '#1d232b', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 9, 15, 15] },
+      },
+      firstLabel,
+    )
+    m.addLayer(
+      {
+        id: 'speed-route',
+        type: 'line',
+        source: 'speed-route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: { 'line-color': SPEED_COLOR, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 5, 15, 10] },
       },
       firstLabel,
     )
@@ -917,7 +1036,9 @@
         replay.sel = v ? String(v.properties.key) : null
         return
       }
-      if (v) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
+      // The speed overlay's segments under the finger; they take a tap before dimmed vehicles.
+      const sh = app.speed ? m.queryRenderedFeatures(box(e.point, r), { layers: ['speed-line', 'speed-route'] }) : []
+      if (v && !(v.properties.dim && sh.length)) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
       const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['plan-stops', 'route-stops', 'stops', 'near', 'stations', 'station-sel'] })[0]
       if (s) {
         const p = s.properties
@@ -926,11 +1047,17 @@
         const code = p.code ? String(p.code) : stop ? app.stops[stop]?.station : null
         if (code) return navigate({ kind: 'station', code, stop: p.code ? null : stop })
       }
+      // The slowest hop under the finger: the one drawn on top.
+      if (sh.length) {
+        app.speedHop = String(sh.reduce((a, b) => (b.properties.r > a.properties.r ? b : a)).properties.k)
+        return
+      }
+      if (app.speedHop) app.speedHop = null
       const rl = m.queryRenderedFeatures(box(e.point, r), { layers: ['route-line'] })[0]
       if (rl && (app.view.kind === 'line' || app.view.kind === 'reliability')) return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
       if (app.view.kind === 'vehicle' || app.view.kind === 'station') closePanel()
     })
-    for (const layer of ['reach-stops', 'veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
+    for (const layer of ['reach-stops', 'veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line', 'speed-line', 'speed-route']) {
       m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'))
       m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''))
     }
@@ -971,6 +1098,7 @@
     )
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
     m.addControl(locateControl, 'top-right')
+    m.addControl(speedControl, 'top-right')
     m.on('load', () => {
       // The compact attribution starts open and covers the bottom of a phone screen.
       el.querySelector('.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')
@@ -1052,7 +1180,7 @@
   $effect(() => {
     const o = planOpt
     const v = app.view
-    void [app.stations, app.plan]
+    void [app.stations, app.plan, app.speed != null]
     if (!loaded) return
     untrack(() => {
       updatePlan()
@@ -1071,7 +1199,8 @@
         return
       }
       // A refresh that keeps the same trips keeps the view; another option or query refits.
-      const key = `${planQuery(v.from, v.to, v.at)}#${v.opt ?? 0}#${o.legs.map((l) => (l.kind === 'ride' ? l.trip : 'w')).join()}`
+      // Switching the speed overlay on or off refits too: its card covers the top of the map.
+      const key = `${planQuery(v.from, v.to, v.at)}#${v.opt ?? 0}#${o.legs.map((l) => (l.kind === 'ride' ? l.trip : 'w')).join()}#${app.speed != null}`
       if (fittedPlan === key) return
       fittedPlan = key
       // The trip's live vehicles are in view too, e.g. one still on its way to the boarding stop.
@@ -1150,6 +1279,13 @@
     fittedReach = q
     const [[w, s], [e, n]] = shapes.bounds
     untrack(() => requestAnimationFrame(() => fitCoords([[w, s], [e, n]])))
+  })
+
+  $effect(() => {
+    const on = app.speed != null
+    speedButton.setAttribute('aria-pressed', String(on))
+    void [app.speedGeometry, app.speedData, app.speedHop, routeHopKeys]
+    if (loaded) untrack(updateSpeeds)
   })
 
   // The approach follows each live poll.

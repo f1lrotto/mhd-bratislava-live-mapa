@@ -12,9 +12,10 @@
   import ReachPanel from './components/ReachPanel.svelte'
   import ReliabilityPanel from './components/ReliabilityPanel.svelte'
   import ReplayPanel from './components/ReplayPanel.svelte'
+  import SpeedCard from './components/SpeedCard.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
-  import { loadStatic, poll, refreshLine, refreshLive, refreshStatus } from './lib/api'
+  import { loadStatic, poll, refreshLine, refreshLive, refreshSpeeds, refreshStatus, speedQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, NO_FILTERS, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
   import MapView from './Map.svelte'
@@ -22,6 +23,7 @@
   const initial = parseUrl()
   app.view = initial.view
   app.filters = initial.filters
+  app.speed = initial.speed
   syncBack()
 
   let staticError = $state<string | null>(null)
@@ -35,6 +37,7 @@
       const wasOpen = app.view.kind !== 'none'
       app.view = s.view
       app.filters = s.filters
+      app.speed = s.speed
       syncBack()
       if (wasOpen && s.view.kind === 'none') (document.querySelector('.maplibregl-canvas') as HTMLElement | null)?.focus()
     }
@@ -87,6 +90,11 @@
   const statusOpen = $derived(app.view.kind === 'status')
   $effect(() => {
     if (statusOpen) return poll(refreshStatus, SLOW_POLL_MS)
+  })
+
+  const speedQ = $derived(app.speed ? speedQuery(app.speed) : null)
+  $effect(() => {
+    if (speedQ) return poll(refreshSpeeds, SLOW_POLL_MS)
   })
 
   const age = $derived(feedAgeS())
@@ -225,6 +233,8 @@
       <ReplayPanel at={app.view.at} />
     {/if}
   {/key}
+
+  {#if app.speed}<SpeedCard />{/if}
 
   <InstallPrompt />
   <ConsentBanner />

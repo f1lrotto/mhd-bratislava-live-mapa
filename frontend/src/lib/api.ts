@@ -1,6 +1,6 @@
 import { track as trackEvent } from './analytics.svelte'
-import { app, POLL_MS } from './state.svelte'
-import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, StopInfo } from './types'
+import { app, POLL_MS, type SpeedOverlay } from './state.svelte'
+import type { CityStatus, LineInfo, LineView, Live, Plan, PlanOption, Reach, SpeedData, SpeedGeometry, StationInfo, StopInfo } from './types'
 
 export async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(url, { signal, headers: { Accept: 'application/json' } })
@@ -60,6 +60,28 @@ export async function refreshStatus(): Promise<void> {
   }
 }
 
+/** The speeds API query for the overlay. */
+export function speedQuery(s: SpeedOverlay): string {
+  return s.view === 'live' ? '/api/speeds?view=live' : `/api/speeds?view=typical${s.at ? `&at=${s.at}` : ''}`
+}
+
+export async function refreshSpeeds(): Promise<void> {
+  const s = app.speed
+  if (!s) return
+  const q = speedQuery(s)
+  try {
+    if (!app.speedGeometry) app.speedGeometry = await getJson<SpeedGeometry>('/api/speeds/geometry')
+    const data = await getJson<SpeedData>(q)
+    // Drop a response for a view or time the user has already left.
+    if (app.speed && speedQuery(app.speed) === q) {
+      app.speedData = data
+      app.speedError = null
+    }
+  } catch (e) {
+    if (app.speed && speedQuery(app.speed) === q) app.speedError = (e as Error).message
+  }
+}
+
 /** The planner query for the current from/to/time, or null while an end is missing. */
 export function planQuery(from: string | null, to: string | null, at: string | null): string | null {
   if (!from || !to) return null
@@ -68,6 +90,14 @@ export function planQuery(from: string | null, to: string | null, at: string | n
   if (app.placeNames[from]) q.set('fromName', app.placeNames[from])
   if (app.placeNames[to]) q.set('toName', app.placeNames[to])
   return `/api/plan?${q}`
+}
+
+/** The planner option drawn on the map: the open one, or the first while the list shows. */
+export function drawnPlanOption(): PlanOption | null {
+  const v = app.view
+  if (v.kind !== 'plan' || !app.plan || app.plan.query !== planQuery(v.from, v.to, v.at)) return null
+  const opts = app.plan.data?.options ?? []
+  return opts.length ? opts[Math.min(v.opt ?? 0, opts.length - 1)] : null
 }
 
 function planKinds(query: string): Record<string, string> {
