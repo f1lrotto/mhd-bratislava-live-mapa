@@ -35,6 +35,7 @@ from .logger import PollLogger
 from .planner import DETOUR, MAX_RIDES, WALK_ONLY_M, WALK_SPEED, Planner
 from .poller import Poller
 from .reliability import KINDS, Reliability
+from .speeds import Speeds
 from .static import TZ, Static
 from .stopevents import StopEventTracker
 
@@ -84,10 +85,15 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
 
     history = History(DATA_DIR / "logs")
     reliability = Reliability(DATA_DIR / "history")
+    speeds = Speeds(DATA_DIR)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await asyncio.to_thread(current_static)  # the first load, before polls need it
+        try:
+            await asyncio.to_thread(speeds.seed, datetime.now(timezone.utc))
+        except Exception:
+            logging.getLogger(__name__).exception("failed to seed the live speeds")
         tasks = [asyncio.create_task(poller.run()), asyncio.create_task(nightly.run_forever(DATA_DIR))] if start_polling else []
         regional = os.environ.get("MHD_NO_REGIONAL") != "1"
         if start_polling and regional:
@@ -111,6 +117,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         state["derived"] = lineview.derive_poll(snap, current_static())
         app.state.realtime = state["derived"].realtime
         events = stop_events.update(state["derived"].realtime)
+        speeds.add(events)
         if poller.logger is not None and snap.updated_at is not None:
             poller.logger.log_stop_events(snap.updated_at, events)
         ms = (time.perf_counter() - t0) * 1000
@@ -344,6 +351,36 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         # A finished chunk never changes; the browser keeps it while the user scrubs back and forth.
         cache = "private, max-age=86400" if body["complete"] else "no-store"
         return JSONResponse(body, headers={"Cache-Control": cache})
+
+    @app.get("/api/speeds")
+    def speed_view(view: str = "live", at: str | None = None):
+        """How fast trips ran each hop between stops against the timetable: in the last half
+        hour (live), or typically on this kind of day around `at` (HH:MM; default now)."""
+        now = datetime.now(timezone.utc)
+        if view == "live":
+            return JSONResponse(speeds.live(now), headers=no_store)
+        if view != "typical":
+            return JSONResponse({"error": "view is live or typical"}, status_code=400)
+        secs = None
+        if at:
+            try:
+                h, m = (int(x) for x in at.split(":"))
+                if not (0 <= h < 24 and 0 <= m < 60):
+                    raise ValueError
+            except ValueError:
+                return JSONResponse({"error": "bad at"}, status_code=400)
+            secs = h * 3600 + m * 60
+        return JSONResponse(speeds.typical(now, secs), headers=no_store)
+
+    @app.get("/api/speeds/geometry")
+    def speed_geometry():
+        """Every hop's line on the map, its length and the lines that run it."""
+        p = current_planner()
+        if p is None:
+            return JSONResponse({"error": "static data not built"}, status_code=503)
+        # Not cached by the browser: a new static build or deploy can change it at any time. The
+        # server keeps it in memory, and the client loads it once per page.
+        return JSONResponse(speeds.geometry(p), headers={"Cache-Control": "no-cache"})
 
     static_dir = DATA_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
