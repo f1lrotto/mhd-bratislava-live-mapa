@@ -7,6 +7,7 @@
   import LinesPanel from './components/LinesPanel.svelte'
   import StatusPanel from './components/StatusPanel.svelte'
   import PlanPanel from './components/PlanPanel.svelte'
+  import NearbyPanel from './components/NearbyPanel.svelte'
   import PrivacyPanel from './components/PrivacyPanel.svelte'
   import ReachPanel from './components/ReachPanel.svelte'
   import StationPanel from './components/StationPanel.svelte'
@@ -193,6 +194,8 @@
       <PlanPanel from={app.view.from} to={app.view.to} at={app.view.at} opt={app.view.opt} />
     {:else if app.view.kind === 'reach'}
       <ReachPanel from={app.view.from} at={app.view.at} min={app.view.min} />
+    {:else if app.view.kind === 'nearby'}
+      <NearbyPanel />
     {:else if app.view.kind === 'status'}
       <StatusPanel />
     {:else if app.view.kind === 'lines'}

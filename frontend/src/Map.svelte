@@ -7,6 +7,7 @@
   import { planQuery, reachQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
+  import { here, openNearby } from './lib/nearby.svelte'
   import { placeCoords, placeLabel, pointValue, setPlanEnd } from './lib/places'
   import { reachBands, reachShapes } from './lib/reach'
   import { app, closePanel, feedDown, navigate, regionalDown } from './lib/state.svelte'
@@ -176,6 +177,89 @@
     })
   }
 
+  // --- near me ----------------------------------------------------------------------------------
+  // The locate button opens the nearby board; MapLibre's GeolocateControl only drew a dot.
+  const locateControl = {
+    btn: null as HTMLButtonElement | null,
+    onAdd() {
+      const box = document.createElement('div')
+      box.className = 'maplibregl-ctrl maplibregl-ctrl-group'
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'maplibregl-ctrl-geolocate'
+      b.title = 'Moja poloha a odchody v okolí'
+      b.setAttribute('aria-label', b.title)
+      b.innerHTML = '<span class="maplibregl-ctrl-icon" aria-hidden="true"></span>'
+      b.addEventListener('click', openNearby)
+      box.append(b)
+      this.btn = b
+      return box
+    },
+    onRemove() {
+      this.btn?.parentElement?.remove()
+      this.btn = null
+    },
+  }
+
+  $effect(() => {
+    const b = locateControl.btn
+    const s = here.status
+    const open = app.view.kind === 'nearby'
+    if (!loaded || !b) return
+    b.classList.toggle('maplibregl-ctrl-geolocate-waiting', s === 'waiting')
+    b.classList.toggle('maplibregl-ctrl-geolocate-active', s === 'on' && open)
+    b.classList.toggle('maplibregl-ctrl-geolocate-background', s === 'on' && !open)
+    b.classList.toggle('maplibregl-ctrl-geolocate-active-error', s === 'denied' || s === 'unavailable')
+    b.setAttribute('aria-pressed', String(open))
+  })
+
+  /** A circle of r metres around a point, as a polygon ring. */
+  function circle(lon: number, lat: number, r: number): LonLat[] {
+    const k = Math.cos((lat * Math.PI) / 180)
+    return Array.from({ length: 49 }, (_, i) => {
+      const a = (i / 48) * 2 * Math.PI
+      return [lon + (Math.cos(a) * r) / (111320 * k), lat + (Math.sin(a) * r) / 110574] as LonLat
+    })
+  }
+
+  $effect(() => {
+    const p = here.pos
+    if (!loaded || !map) return
+    ;(map.getSource('me') as GeoJSONSource).setData({
+      type: 'FeatureCollection',
+      features: p
+        ? [
+            { type: 'Feature', geometry: { type: 'Polygon', coordinates: [circle(p.lon, p.lat, p.acc)] }, properties: {} },
+            { type: 'Feature', geometry: { type: 'Point', coordinates: [p.lon, p.lat] }, properties: {} },
+          ]
+        : [],
+    })
+  })
+
+  $effect(() => {
+    const near = app.view.kind === 'nearby' ? here.nearby : []
+    if (!loaded || !map) return
+    ;(map.getSource('near') as GeoJSONSource).setData({
+      type: 'FeatureCollection',
+      features: near.map((s) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lon, s.lat] }, properties: { code: s.code, name: s.name } })),
+    })
+  })
+
+  // Each tap of the locate button fits the map to you and the nearby stations, once you are located.
+  let fittedSeq = 0
+  $effect(() => {
+    const seq = here.fitSeq
+    const p = here.pos
+    const near = here.nearby
+    if (!loaded || !p || seq === fittedSeq || !Object.keys(app.stations).length) return
+    fittedSeq = seq
+    untrack(() =>
+      requestAnimationFrame(() =>
+        near.length ? fitCoords([[p.lon, p.lat], ...near.flatMap((s) => s.pts.map((q): LonLat => [q.lon, q.lat]))]) : centreOn(p.lon, p.lat, 15),
+      ),
+    )
+  })
+
   // --- planner overlay --------------------------------------------------------------------------
   function updatePlan(): void {
     if (!map) return
@@ -309,7 +393,7 @@
   function setup(m: MlMap): void {
     addMarkerImages(m)
     addPinImages(m)
-    for (const id of ['reach', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles'])
+    for (const id of ['reach', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near'])
       m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
@@ -701,6 +785,57 @@
       },
       paint: { 'text-color': '#0f6b37', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
     })
+    // The user's position: the accuracy circle under the streets' labels, the dot above everything.
+    m.addLayer(
+      {
+        id: 'me-acc',
+        type: 'fill',
+        source: 'me',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#146eff', 'fill-opacity': 0.1, 'fill-outline-color': 'rgba(20, 110, 255, 0.45)' },
+      },
+      firstLabel,
+    )
+    // The stations of the nearby board, at any zoom, under the vehicles.
+    m.addLayer(
+      {
+        id: 'near',
+        type: 'circle',
+        source: 'near',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 9],
+          'circle-color': '#ffffff',
+          'circle-stroke-color': '#1d232b',
+          'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 12, 2.5, 16, 4],
+        },
+      },
+      'veh-body-dim',
+    )
+    m.addLayer(
+      {
+        id: 'near-label',
+        type: 'symbol',
+        source: 'near',
+        minzoom: 13,
+        layout: {
+          'text-field': ['get', 'name'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': 12,
+          'text-anchor': 'top',
+          'text-offset': [0, 1.1],
+          'text-optional': true,
+        },
+        paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      },
+      'veh-body-dim',
+    )
+    m.addLayer({
+      id: 'me-dot',
+      type: 'circle',
+      source: 'me',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 7.5, 'circle-color': '#146eff', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 },
+    })
 
     const box = (p: { x: number; y: number }, r: number): [PointLike, PointLike] => [
       [p.x - r, p.y - r],
@@ -729,7 +864,7 @@
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
       const v = vs.find((f) => !f.properties.dim) ?? vs[0]
       if (v) return navigate({ kind: 'vehicle', key: String(v.properties.key) })
-      const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['plan-stops', 'route-stops', 'stops', 'stations', 'station-sel'] })[0]
+      const s = m.queryRenderedFeatures(box(e.point, r), { layers: ['plan-stops', 'route-stops', 'stops', 'near', 'stations', 'station-sel'] })[0]
       if (s) {
         const p = s.properties
         // Platforms (route, plan and platform markers carry a stop id) open their station with that platform.
@@ -741,7 +876,7 @@
       if (rl && app.view.kind === 'line') return navigate({ ...app.view, dir: String(rl.properties.dir) }, { replace: true })
       if (app.view.kind === 'vehicle' || app.view.kind === 'station') closePanel()
     })
-    for (const layer of ['veh-body', 'veh-body-dim', 'route-stops', 'stops', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
+    for (const layer of ['veh-body', 'veh-body-dim', 'route-stops', 'stops', 'near', 'stations', 'station-sel', 'plan-stops', 'route-line']) {
       m.on('mouseenter', layer, () => (m.getCanvas().style.cursor = 'pointer'))
       m.on('mouseleave', layer, () => (m.getCanvas().style.cursor = ''))
     }
@@ -765,8 +900,6 @@
       locale: {
         'NavigationControl.ZoomIn': 'Priblížiť',
         'NavigationControl.ZoomOut': 'Oddialiť',
-        'GeolocateControl.FindMyLocation': 'Moja poloha',
-        'GeolocateControl.LocationNotAvailable': 'Poloha nie je dostupná',
         'AttributionControl.ToggleAttribution': 'Zdroje dát',
         'AttributionControl.MapFeedback': 'Nahlásiť chybu mapy',
       },
@@ -783,10 +916,7 @@
       'bottom-right',
     )
     m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
-    m.addControl(
-      new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }),
-      'top-right',
-    )
+    m.addControl(locateControl, 'top-right')
     m.on('load', () => {
       // The compact attribution starts open and covers the bottom of a phone screen.
       el.querySelector('.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')

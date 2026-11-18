@@ -5,6 +5,7 @@ import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, StationInfo, St
 //   /linka/83?smer=1   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 //   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
+//   /blizko (departures near the user; the position is never in the URL, so a shared link locates its opener)
 // Old /zastavka/<stop id> links are mapped to the stop's station by the station panel.
 export type View =
   | { kind: 'none' }
@@ -13,6 +14,7 @@ export type View =
   | { kind: 'station'; code: string; stop: string | null }
   | { kind: 'plan'; from: string | null; to: string | null; at: string | null; opt: number | null }
   | { kind: 'reach'; from: string | null; at: string | null; min: number }
+  | { kind: 'nearby' }
   | { kind: 'status' }
   | { kind: 'lines' }
   | { kind: 'filters' }
@@ -87,6 +89,7 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
     const min = parseInt(q.get('min') ?? '', 10)
     view = { kind: 'reach', from: q.get('z'), at: q.get('cas'), min: [30, 45, 60].includes(min) ? min : 30 }
   }
+  else if (parts[0] === 'blizko') view = { kind: 'nearby' }
   else if (parts[0] === 'stav') view = { kind: 'status' }
   else if (parts[0] === 'linky') view = { kind: 'lines' }
   else if (parts[0] === 'filtre') view = { kind: 'filters' }
@@ -131,6 +134,9 @@ export function buildUrl(view: View, filters: Filters): string {
       if (view.from) q.set('z', view.from)
       if (view.at) q.set('cas', view.at)
       if (view.min !== 30) q.set('min', String(view.min))
+      break
+    case 'nearby':
+      path = '/blizko'
       break
     case 'status':
       path = '/stav'

@@ -3,7 +3,7 @@
   import Panel from './Panel.svelte'
 
   // Keep this text true to what the app does: lib/analytics.svelte.ts, InstallPrompt (install-dismissed),
-  // sw.js, the planner ("Moja poloha"), the map tiles (Map.svelte) and the hosting (AGENTS.md).
+  // sw.js, the planner ("Moja poloha"), near me (lib/nearby.svelte.ts), the map tiles (Map.svelte) and the hosting (AGENTS.md).
 </script>
 
 <Panel tall label="Ochrana súkromia">
@@ -74,9 +74,16 @@
 
     <h3 class="section">Vaša poloha</h3>
     <p>
-      Polohu zisťujeme len po ťuknutí na „Moja poloha“ a s povolením prehliadača. Pri hľadaní trasy alebo mapy dosahu ju
-      prehliadač pošle nášmu serveru, ktorý z nej vypočíta spojenia; neukladáme ju a neposielame ju službe PostHog. Je však súčasťou adresy
-      stránky, preto si dajte pozor, komu odkaz na trasu alebo dosah pošlete.
+      Polohu zisťujeme len po ťuknutí na „Moja poloha“ alebo na tlačidlo polohy na mape a s povolením prehliadača. Pri
+      hľadaní trasy alebo mapy dosahu ju prehliadač pošle nášmu serveru, ktorý z nej vypočíta spojenia; neukladáme ju a
+      neposielame ju službe PostHog. Je však súčasťou adresy stránky, preto si dajte pozor, komu odkaz na trasu alebo
+      dosah pošlete.
+    </p>
+    <p>
+      Odchody v okolí počíta prehliadač priamo vo vašom zariadení: sám vyberie najbližšie zastávky a odhadne cestu k nim
+      pešo. Serveru posiela len kódy týchto zastávok, aby dostal ich odchody, takže z jeho záznamov sa dá vyčítať najviac
+      to, pri ktorých zastávkach ste boli. Polohu sledujeme, len kým je stránka otvorená na obrazovke, a nikam ju
+      neukladáme; „Skryť moju polohu“ sledovanie vypne. Adresa <code>/blizko</code> polohu neobsahuje.
     </p>
 
     <h3 class="section">Server a mapa</h3>
