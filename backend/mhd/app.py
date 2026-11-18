@@ -4,6 +4,8 @@ Environment:
   MHD_DATA_DIR      where logs and the static build live (default: ../data next to backend/)
   MHD_NO_POLL=1     don't start the poller or the nightly jobs (tests, frontend work against a fixture)
   MHD_NO_REGIONAL=1 don't sweep the IDS BK map for regional buses (DPB's poller still runs)
+  MHD_NO_ACCOUNTS=1 don't start the accounts server (accounts.py); /api/auth/* then answers 503
+  AUTH_PORT         the accounts server's local port (default 8790)
   MHD_BASIC_AUTH    "user:password" to put everything behind HTTP basic auth while v1 is private
   RAILWAY_ENVIRONMENT_NAME=production (set by Railway) sends feed heartbeats to PostHog (heartbeat.py)
 
@@ -29,7 +31,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import derive, heartbeat, idsbk, lineview, nightly, replay
+from . import accounts, derive, heartbeat, idsbk, lineview, nightly, replay
 from .history import History
 from .logger import PollLogger
 from .planner import DETOUR, MAX_RIDES, WALK_ONLY_M, WALK_SPEED, Planner
@@ -101,9 +103,15 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         # Only production reports to the monitor: a dev server's heartbeats would hide an outage.
         if start_polling and os.environ.get("RAILWAY_ENVIRONMENT_NAME") == "production":
             tasks.append(asyncio.create_task(heartbeat.run_forever(poller, regional)))
+        if os.environ.get("MHD_NO_ACCOUNTS") != "1":
+            if accounts.available():
+                tasks.append(asyncio.create_task(accounts.run_forever(DATA_DIR)))
+            else:
+                logging.getLogger(__name__).warning("accounts off: no node or auth/node_modules (npm ci in auth/)")
         yield
         for task in tasks:
             task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     app = FastAPI(title="MHD naživo", lifespan=lifespan)
     app.state.poller = poller
@@ -381,6 +389,12 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         # Not cached by the browser: a new static build or deploy can change it at any time. The
         # server keeps it in memory, and the client loads it once per page.
         return JSONResponse(speeds.geometry(p), headers={"Cache-Control": "no-cache"})
+    auth_proxy = accounts.Proxy()
+    accounts.quiet_logs()
+
+    @app.api_route("/api/auth/{path:path}", methods=["GET", "POST"], include_in_schema=False)
+    async def auth_route(path: str, request: Request):
+        return await auth_proxy(path, request)
 
     static_dir = DATA_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)

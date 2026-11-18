@@ -1,0 +1,14 @@
+{
+  "name": "auth",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@better-auth/passkey": "^1.7.25",
+    "better-auth": "^1.7.25",
+    "zod": "^4.6.7"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  }
+}
