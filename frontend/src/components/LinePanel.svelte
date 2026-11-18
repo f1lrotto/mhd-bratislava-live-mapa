@@ -274,7 +274,7 @@
   }
   .tabs button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .tab-name {
     flex: 1;
@@ -355,7 +355,7 @@
     height: 18px;
     margin-left: -9px;
     border-radius: 50%;
-    border: 2.5px solid #fff;
+    border: 2.5px solid var(--surface);
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     padding: 0;
   }
@@ -458,7 +458,7 @@
     width: 2px;
     height: 20px;
     margin: 0 15px 0 4px;
-    background: #c9ced5;
+    background: var(--rail);
     border-radius: 1px;
   }
   .between.gap .gap-line {

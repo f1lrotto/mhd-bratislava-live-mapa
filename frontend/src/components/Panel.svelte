@@ -178,7 +178,7 @@
       height: 5px;
       margin-left: -20px;
       border-radius: 3px;
-      background: #c9ced5;
+      background: var(--rail);
     }
   }
 </style>

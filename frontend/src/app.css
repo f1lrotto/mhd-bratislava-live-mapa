@@ -12,9 +12,20 @@
   --bad: #d7263d;
   --bad-bg: #fde8eb;
   --bad-text: #a51428;
+  --bad-line: #f3b8c0;
   --stale: #b4bac3;
+  --ok-bg: #e3f5ea;
+  --ok-text: #0f6b38;
+  /* Text on --text backgrounds (pressed buttons, the primary button). */
+  --on-text: #ffffff;
+  --text-hover: #000000;
+  /* Field borders; dividers and popover outlines; rails and the sheet's handle. */
+  --border: #d4d8dd;
+  --line: #e3e6ea;
+  --rail: #c9ced5;
   --shadow: 0 6px 24px rgba(16, 24, 40, 0.18), 0 1px 3px rgba(16, 24, 40, 0.12);
   --shadow-sm: 0 2px 10px rgba(16, 24, 40, 0.14), 0 1px 2px rgba(16, 24, 40, 0.1);
+  color-scheme: light;
   font-family:
     'IBM Plex Sans',
     system-ui,
@@ -27,6 +38,35 @@
   line-height: 1.4;
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Dark: <html data-theme="dark">, set by index.html and lib/theme.svelte.ts. */
+:root[data-theme='dark'] {
+  --text: #e6e9ed;
+  --muted: #9ba4af;
+  --surface: #1b1f24;
+  --chip: #272d34;
+  --hover: #323942;
+  --accent: #4b8dff;
+  --ok: #2eb06a;
+  --warn: #e6a700;
+  --warn-bg: #3a2e0c;
+  --warn-text: #f0c35a;
+  --bad: #e5484d;
+  --bad-bg: #3d1a20;
+  --bad-text: #ff8a96;
+  --bad-line: #6e2b35;
+  --stale: #5e6670;
+  --ok-bg: #16311f;
+  --ok-text: #6fd59b;
+  --on-text: #14181c;
+  --text-hover: #ffffff;
+  --border: #3d454f;
+  --line: #2e353d;
+  --rail: #4a525c;
+  --shadow: 0 6px 24px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.35);
+  color-scheme: dark;
 }
 
 * {
@@ -121,14 +161,14 @@ input:focus-visible {
 }
 .primary {
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
 }
 .secondary {
   background: var(--chip);
   color: var(--text);
 }
 .primary:hover {
-  background: #000;
+  background: var(--text-hover);
 }
 .secondary:hover {
   background: var(--hover);
@@ -190,7 +230,7 @@ input:focus-visible {
 }
 .maplibregl-ctrl-group button.news-toggle[aria-pressed='true'] {
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
 }
 
 /* The speed overlay's map button (Map.svelte). */
@@ -214,5 +254,23 @@ input:focus-visible {
 }
 .maplibregl-ctrl-group button.speed-toggle[aria-pressed='true'] {
   background: var(--text);
-  color: #fff;
+  color: var(--on-text);
+}
+
+/* MapLibre's controls and attribution in the dark theme: its icons are dark images, inverted here
+   (the hue turned back, so the locate button's blue stays blue). */
+:root[data-theme='dark'] .maplibregl-ctrl-group,
+:root[data-theme='dark'] .maplibregl-ctrl-attrib.maplibregl-compact {
+  background: var(--surface);
+  color: var(--text);
+}
+:root[data-theme='dark'] .maplibregl-ctrl-group button + button {
+  border-top-color: var(--line);
+}
+:root[data-theme='dark'] .maplibregl-ctrl-icon,
+:root[data-theme='dark'] .maplibregl-ctrl-attrib-button {
+  filter: invert(1) hue-rotate(180deg);
+}
+:root[data-theme='dark'] .maplibregl-ctrl-attrib a {
+  color: var(--text);
 }

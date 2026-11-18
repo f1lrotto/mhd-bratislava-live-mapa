@@ -788,7 +788,7 @@
     gap: 6px;
     padding: 10px 12px;
     border-radius: 12px;
-    border: 1.5px solid #e3e6ea;
+    border: 1.5px solid var(--line);
     text-align: left;
   }
   .card:hover {
@@ -916,8 +916,8 @@
     width: 100%;
     padding: 8px 10px;
     border-radius: 10px;
-    background: #fff;
-    border: 1.5px solid #e3e6ea;
+    background: var(--surface);
+    border: 1.5px solid var(--line);
     text-align: left;
   }
   .fb:hover {
@@ -982,7 +982,7 @@
   }
   .speed-btn[aria-pressed='true'] {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .speed-btn svg {
     width: 18px;
@@ -1060,7 +1060,7 @@
   }
   .opt-tabs button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .big:focus {
     outline: none;
@@ -1099,7 +1099,7 @@
     top: 0;
     bottom: 0;
     width: 6px;
-    background: var(--c, #c9ced5);
+    background: var(--c, var(--rail));
     border-radius: 3px;
   }
   .rail.dashed::before {
@@ -1123,18 +1123,18 @@
     height: 16px;
     border-radius: 50%;
     background: var(--c, var(--text));
-    border: 3px solid #fff;
+    border: 3px solid var(--surface);
     box-shadow: 0 0 0 1.5px var(--c, var(--text));
   }
   .dot.ring {
-    background: #fff;
+    background: var(--surface);
     border: 4px solid var(--c, var(--text));
-    box-shadow: 0 0 0 2px #fff, 0 0 0 3.5px var(--text);
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--text);
   }
   .dot.origin {
-    background: #fff;
+    background: var(--surface);
     border: 4px solid var(--text);
-    box-shadow: 0 0 0 2px #fff;
+    box-shadow: 0 0 0 2px var(--surface);
   }
   .dot.flag {
     background: var(--bad);
@@ -1198,8 +1198,8 @@
     gap: 6px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: #e5f4ea;
-    color: #0f6b37;
+    background: var(--ok-bg);
+    color: var(--ok-text);
     font-weight: 600;
     font-size: 0.85rem;
   }

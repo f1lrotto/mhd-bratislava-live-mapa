@@ -158,7 +158,7 @@
   }
   .chips-row button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .when {
     margin: 10px 0 4px;

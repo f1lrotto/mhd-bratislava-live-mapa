@@ -255,7 +255,7 @@
     height: 52px;
     border-radius: 50%;
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
     display: grid;
     place-items: center;
   }
@@ -314,7 +314,7 @@
     margin-top: 10px;
     padding: 10px 12px 12px;
     border-radius: 14px;
-    border: 1px solid #e3e6ea;
+    border: 1px solid var(--line);
     box-shadow: var(--shadow-sm);
   }
   .scrub {
@@ -328,7 +328,7 @@
     top: 9px;
     height: 8px;
     border-radius: 4px;
-    background: repeating-linear-gradient(-45deg, #eef0f3 0 4px, #e2e5e9 4px 8px);
+    background: repeating-linear-gradient(-45deg, var(--chip) 0 4px, var(--line) 4px 8px);
     overflow: hidden;
   }
   .coverage span {
@@ -362,7 +362,7 @@
     margin-top: -7px;
     border-radius: 50%;
     background: var(--text);
-    border: 3px solid #fff;
+    border: 3px solid var(--surface);
     box-shadow: var(--shadow-sm);
   }
   .scrub input::-moz-range-thumb {
@@ -370,7 +370,7 @@
     height: 16px;
     border-radius: 50%;
     background: var(--text);
-    border: 3px solid #fff;
+    border: 3px solid var(--surface);
     box-shadow: var(--shadow-sm);
   }
   .ticks {
@@ -422,7 +422,7 @@
   .speeds button[aria-pressed='true'],
   .days button[aria-pressed='true'] {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .status {
     margin: 10px 0 0;

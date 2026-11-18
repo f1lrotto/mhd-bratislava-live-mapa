@@ -15,6 +15,13 @@ Everything above the first day is not shown.
 
 ## 2026-11-18
 
+### Tmavý režim
+
+Mapa aj panely majú tmavú podobu. Zapne sa sama, keď máte tmavý režim v telefóne alebo počítači; v profile si ho
+môžete zapnúť alebo vypnúť natrvalo.
+
+[Otvoriť profil](/ucet)
+
 ### English
 
 Aplikácia je aj po anglicky. Jazyk prepnete tlačidlom so zemeguľou v hornej lište; ak ste prihlásení, uloží sa do

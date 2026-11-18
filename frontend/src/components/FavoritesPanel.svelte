@@ -197,9 +197,9 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--surface);
     border: 2.5px solid var(--text);
-    box-shadow: inset 0 0 0 3px #fff, inset 0 0 0 8px var(--text);
+    box-shadow: inset 0 0 0 3px var(--surface), inset 0 0 0 8px var(--text);
   }
   .route-icon {
     flex: none;

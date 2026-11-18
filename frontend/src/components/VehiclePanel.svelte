@@ -267,7 +267,7 @@
     top: 0;
     bottom: 0;
     width: 4px;
-    background: #c9ced5;
+    background: var(--rail);
   }
   .stops li:first-child .tl::before {
     top: 50%;
@@ -283,7 +283,7 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--surface);
     border: 2.5px solid var(--text);
     box-sizing: border-box;
   }

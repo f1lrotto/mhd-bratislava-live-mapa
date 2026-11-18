@@ -211,7 +211,7 @@
   }
   .chips button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .trigger {
     display: inline-flex;
@@ -248,7 +248,7 @@
     padding: 10px 12px 12px;
     border-radius: 14px;
     background: var(--surface);
-    border: 1px solid #e3e6ea;
+    border: 1px solid var(--line);
     box-shadow: var(--shadow-sm);
   }
   .pop:focus {
@@ -317,7 +317,7 @@
   }
   .grid button.sel {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .grid button:disabled {
     color: var(--stale);

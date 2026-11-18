@@ -75,7 +75,7 @@
   }
   .cell.on {
     border-color: var(--text);
-    background: #fff;
+    background: var(--surface);
   }
   .cell.idle :global(.badge) {
     opacity: 0.45;

@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as maplibregl from 'maplibre-gl'
-  import type { GeoJSONSource, Map as MlMap, PointLike } from 'maplibre-gl'
+  import type { GeoJSONSource, Map as MlMap, PointLike, StyleSpecification } from 'maplibre-gl'
   import 'maplibre-gl/dist/maplibre-gl.css'
   import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
   import { onMount, untrack } from 'svelte'
@@ -16,6 +16,7 @@
   import { frame, replay } from './lib/replay.svelte'
   import { routeHops, SPEED_COLORS, SPEED_STEPS } from './lib/speeds'
   import { app, closePanel, feedDown, navigate, regionalDown, setSpeed } from './lib/state.svelte'
+  import { isDark } from './lib/theme.svelte'
   import type { LineView, Live, PlanOption } from './lib/types'
 
   let { activeLine, selectedDir }: { activeLine: string | null; selectedDir: string | null } = $props()
@@ -23,7 +24,15 @@
   // The bundler moves MapLibre's worker; tell MapLibre where it ended up.
   maplibregl.setWorkerUrl(workerUrl)
 
-  const STYLE = 'https://tiles.openfreemap.org/styles/positron'
+  // The base map by theme; both share OpenFreeMap's sources, sprite and fonts.
+  const STYLE = { light: 'https://tiles.openfreemap.org/styles/positron', dark: 'https://tiles.openfreemap.org/styles/dark' }
+  /** What of the app's layers follows the theme, layers read it with C(name): colours, and the
+   * opacity of dimmed vehicles (their grey glares on the dark map). */
+  const PALETTE = {
+    light: { paper: '#ffffff', ink: '#1d232b', ink2: '#4a525c', walk: '#5b6470', reach: '#2a2180', to: '#a51428', mine: '#0f6b37', dim: 0.28 },
+    dark: { paper: '#1b1f24', ink: '#e6e9ed', ink2: '#aab2bc', walk: '#9ba4af', reach: '#c4bdfa', to: '#ff8a96', mine: '#6fd59b', dim: 0.1 },
+  }
+  const C = (name: keyof typeof PALETTE.light) => ['global-state', name] as any
   const ANIM_MS = 1500
   const TELEPORT_M = 1500
 
@@ -501,7 +510,7 @@
   // --- setup ------------------------------------------------------------------------------------
   const EMPTY = { type: 'FeatureCollection' as const, features: [] }
   const ICON_SIZE = ['interpolate', ['linear'], ['zoom'], 10, 0.42, 12, 0.66, 14, 0.88, 16, 1] as any
-  const dimmed = (on: number, off: number, other = on) =>
+  const dimmed = (on: number, off: number | object, other = on) =>
     ['case', ['get', 'dim'], off, ['get', 'other'], other, on] as any
   // The active line's (or planned trip's) vehicles are 30% larger and always labelled;
   // vehicles out of service are 30% smaller.
@@ -519,11 +528,28 @@
     12, ['case', ['get', 'hi'], ['case', LONG, 10.5, 12.5], ['get', 'idle'], ['case', LONG, 7, 8], ['case', LONG, 9.5, 11.5]],
   ] as any
 
+  const SOURCES = ['reach', 'speeds', 'speed-sel', 'speed-route', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near']
+
+  /** The other theme's base map with the app's sources and layers carried over: those under the
+   * base map's labels stay under them, the rest on top. */
+  function keepOwn(prev: StyleSpecification | undefined, next: StyleSpecification): StyleSpecification {
+    if (!prev) return next
+    const own = prev.layers.filter((l) => 'source' in l && SOURCES.includes(l.source))
+    const cut = prev.layers.findIndex((l) => l.type === 'symbol' && !own.includes(l))
+    const under = own.filter((l) => cut >= 0 && prev.layers.indexOf(l) < cut)
+    const layers = [...next.layers]
+    const label = layers.findIndex((l) => l.type === 'symbol')
+    layers.splice(label < 0 ? layers.length : label, 0, ...under)
+    layers.push(...own.filter((l) => !under.includes(l)))
+    const sources = { ...next.sources }
+    for (const id of SOURCES) sources[id] = prev.sources[id]
+    return { ...next, sources, layers }
+  }
+
   function setup(m: MlMap): void {
     addMarkerImages(m)
     addPinImages(m)
-    for (const id of ['reach', 'speeds', 'speed-sel', 'speed-route', 'stations', 'stops', 'station-sel', 'route', 'route-stops', 'plan', 'plan-approach', 'plan-stops', 'plan-ends', 'vehicles', 'me', 'near'])
-      m.addSource(id, { type: 'geojson', data: EMPTY })
+    for (const id of SOURCES) m.addSource(id, { type: 'geojson', data: EMPTY })
     const firstLabel = m.getStyle().layers.find((l) => l.type === 'symbol')?.id
 
     // The reachability bands, nested widest first, so the nearer ones are darker.
@@ -560,7 +586,7 @@
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 13, 5, 16, 8],
           'circle-color': ['get', 'color'],
-          'circle-stroke-color': '#ffffff',
+          'circle-stroke-color': C('paper'),
           'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 10, 1.5, 14, 2],
         },
       },
@@ -581,7 +607,7 @@
         'text-optional': true,
         'symbol-sort-key': ['get', 'rank'],
       },
-      paint: { 'text-color': '#2a2180', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+      paint: { 'text-color': C('reach'), 'text-halo-color': C('paper'), 'text-halo-width': 1.5 },
     })
     const showReachStops = () => {
       const f = ['all', ['has', 'station'], ['<=', ['get', 'minz'], Math.floor(m.getZoom())]] as any
@@ -595,7 +621,7 @@
       type: 'circle',
       source: 'reach',
       filter: ['has', 'origin'],
-      paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#3a2ea8', 'circle-stroke-width': 4.5 },
+      paint: { 'circle-radius': 7, 'circle-color': C('paper'), 'circle-stroke-color': '#3a2ea8', 'circle-stroke-width': 4.5 },
     })
     // The speed overlay, under routes and plans. Each direction of a street sits on its own side
     // (the right, as traffic drives), so both show; the slowest hop draws on top where they overlap.
@@ -609,7 +635,7 @@
         source: 'speed-sel',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': '#1d232b',
+          'line-color': C('ink'),
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 13, 8, 16, 12],
           'line-offset': SPEED_OFF,
         },
@@ -637,7 +663,7 @@
         source: 'route',
         layout: { 'line-join': 'round', 'line-cap': 'round', 'line-sort-key': ['case', ['get', 'sel'], 1, 0] },
         paint: {
-          'line-color': '#ffffff',
+          'line-color': C('paper'),
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 7, 15, 14],
           'line-opacity': ['case', ['get', 'sel'], 1, 0.6],
         },
@@ -665,7 +691,7 @@
         type: 'line',
         source: 'plan-approach',
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#ffffff', 'line-opacity': 0.85, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 15, 10] },
+        paint: { 'line-color': C('paper'), 'line-opacity': 0.85, 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 6, 15, 10] },
       },
       firstLabel,
     )
@@ -692,7 +718,7 @@
         filter: ['==', ['get', 'kind'], 'walk'],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: {
-          'line-color': '#5b6470',
+          'line-color': C('walk'),
           'line-width': ['interpolate', ['linear'], ['zoom'], 10, 3.5, 15, 6],
           'line-dasharray': [0.1, 1.8],
         },
@@ -706,7 +732,7 @@
         source: 'plan',
         filter: ['==', ['get', 'kind'], 'ride'],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 15, 15] },
+        paint: { 'line-color': C('paper'), 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 8, 15, 15] },
       },
       firstLabel,
     )
@@ -729,7 +755,7 @@
         source: 'speed-route',
         filter: ['get', 'sel'],
         layout: { 'line-join': 'round', 'line-cap': 'round' },
-        paint: { 'line-color': '#1d232b', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 9, 15, 15] },
+        paint: { 'line-color': C('ink'), 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 9, 15, 15] },
       },
       firstLabel,
     )
@@ -770,8 +796,8 @@
       maxzoom: 17,
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 14, 4, 16, 6.5],
-        'circle-color': '#ffffff',
-        'circle-stroke-color': '#4a525c',
+        'circle-color': C('paper'),
+        'circle-stroke-color': C('ink2'),
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 14, 1.5, 16, 2.5],
       },
     })
@@ -782,8 +808,8 @@
       minzoom: 17,
       paint: {
         'circle-radius': 8,
-        'circle-color': '#ffffff',
-        'circle-stroke-color': '#4a525c',
+        'circle-color': C('paper'),
+        'circle-stroke-color': C('ink2'),
         'circle-stroke-width': 2,
       },
     })
@@ -799,7 +825,7 @@
         'text-allow-overlap': true,
         'text-ignore-placement': true,
       },
-      paint: { 'text-color': '#1d232b' },
+      paint: { 'text-color': C('ink') },
     })
     m.addLayer({
       id: 'stations-label',
@@ -814,7 +840,7 @@
         'text-offset': ['step', ['zoom'], ['literal', [0, 0.8]], 17, ['literal', [0, 1.6]]],
         'text-optional': true,
       },
-      paint: { 'text-color': '#4a525c', 'text-halo-color': '#ffffff', 'text-halo-width': 1.5 },
+      paint: { 'text-color': C('ink2'), 'text-halo-color': C('paper'), 'text-halo-width': 1.5 },
     })
     // The open station, at any zoom.
     m.addLayer({
@@ -823,9 +849,9 @@
       source: 'station-sel',
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 6, 16, 11],
-        'circle-color': '#ffffff',
+        'circle-color': C('paper'),
         'circle-opacity': ['step', ['zoom'], 1, 17, 0],
-        'circle-stroke-color': '#1d232b',
+        'circle-stroke-color': C('ink'),
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 11, 3, 16, 5],
       },
     })
@@ -841,7 +867,7 @@
         'text-offset': [0, 1.3],
         'text-allow-overlap': true,
       },
-      paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      paint: { 'text-color': C('ink'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
     })
     m.addLayer({
       id: 'route-stops',
@@ -850,7 +876,7 @@
       minzoom: 11,
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 2.5, 15, 5.5],
-        'circle-color': '#ffffff',
+        'circle-color': C('paper'),
         'circle-stroke-color': ['get', 'color'],
         'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 11, 1.5, 15, 2.5],
       },
@@ -868,7 +894,7 @@
         'text-offset': [0.9, 0],
         'text-optional': true,
       },
-      paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      paint: { 'text-color': C('ink'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
     })
     // Dimmed vehicles sit under the planned trip's stops; the rest above them.
     m.addLayer({
@@ -882,7 +908,7 @@
         'icon-allow-overlap': true,
         'icon-ignore-placement': true,
       },
-      paint: { 'icon-opacity': 0.28 },
+      paint: { 'icon-opacity': C('dim') },
     })
     m.addLayer({
       id: 'plan-stops',
@@ -891,8 +917,8 @@
       layout: { 'circle-sort-key': ['match', ['get', 'role'], 'mid', 0, 1] },
       paint: {
         'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, ['match', ['get', 'role'], 'mid', 2.5, 7], 15, ['match', ['get', 'role'], 'mid', 4, 8.5]],
-        'circle-color': ['match', ['get', 'role'], 'board', ['get', 'color'], '#ffffff'],
-        'circle-stroke-color': ['match', ['get', 'role'], 'board', '#ffffff', 'mid', ['get', 'color'], '#1d232b'],
+        'circle-color': ['match', ['get', 'role'], 'board', ['get', 'color'], C('paper')],
+        'circle-stroke-color': ['match', ['get', 'role'], 'board', C('paper'), 'mid', ['get', 'color'], C('ink')],
         'circle-stroke-width': ['match', ['get', 'role'], 'board', 3, 'mid', 2, 4],
       },
     })
@@ -901,7 +927,7 @@
       type: 'circle',
       source: 'plan-ends',
       filter: ['==', ['get', 'role'], 'from'],
-      paint: { 'circle-radius': 7, 'circle-color': '#ffffff', 'circle-stroke-color': '#1d232b', 'circle-stroke-width': 4.5 },
+      paint: { 'circle-radius': 7, 'circle-color': C('paper'), 'circle-stroke-color': C('ink'), 'circle-stroke-width': 4.5 },
     })
     m.addLayer({
       id: 'plan-label',
@@ -916,7 +942,7 @@
         'text-offset': [1.1, 0],
         'text-optional': true,
       },
-      paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      paint: { 'text-color': C('ink'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
     })
     m.addLayer({
       id: 'plan-to',
@@ -935,7 +961,7 @@
         'text-offset': [1.1, -1.4],
         'text-optional': true,
       },
-      paint: { 'text-color': '#a51428', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      paint: { 'text-color': C('to'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
     })
     m.addLayer({
       id: 'veh-sel',
@@ -986,7 +1012,7 @@
       },
       paint: {
         'text-color': '#ffffff',
-        'icon-opacity': ['case', ['get', 'idle'], 0.7, dimmed(1, 0.28, 0.5)],
+        'icon-opacity': ['case', ['get', 'idle'], 0.7, dimmed(1, C('dim'), 0.5)],
         'text-opacity': ['case', ['get', 'idle'], 0.9, dimmed(1, 0, 0.6)],
       },
     })
@@ -1009,7 +1035,7 @@
         'text-ignore-placement': true,
         'symbol-sort-key': ['get', 'order'],
       },
-      paint: { 'text-color': '#0f6b37', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+      paint: { 'text-color': C('mine'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
     })
     // The user's position: the accuracy circle under the streets' labels, the dot above everything.
     m.addLayer(
@@ -1030,8 +1056,8 @@
         source: 'near',
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 5, 16, 9],
-          'circle-color': '#ffffff',
-          'circle-stroke-color': '#1d232b',
+          'circle-color': C('paper'),
+          'circle-stroke-color': C('ink'),
           'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 12, 2.5, 16, 4],
         },
       },
@@ -1051,7 +1077,7 @@
           'text-offset': [0, 1.1],
           'text-optional': true,
         },
-        paint: { 'text-color': '#1d232b', 'text-halo-color': '#ffffff', 'text-halo-width': 2 },
+        paint: { 'text-color': C('ink'), 'text-halo-color': C('paper'), 'text-halo-width': 2 },
       },
       'veh-body-dim',
     )
@@ -1125,10 +1151,13 @@
     }
   }
 
+  let theme: 'light' | 'dark' = isDark() ? 'dark' : 'light'
+
   onMount(() => {
     const m = new maplibregl.Map({
       container: el,
-      style: STYLE,
+      style: STYLE[theme],
+      globalState: PALETTE[theme],
       center: [17.115, 48.152],
       zoom: 12,
       // Zoom 8 fits the whole IDS BK area (idsbk.AREA) on a phone. The bounds reach 60–70 km past
@@ -1173,6 +1202,15 @@
       addControls(m)
       if (loaded) m.setLayoutProperty('veh-tag', 'text-field', t('Váš spoj', 'Your vehicle'))
     })
+  })
+
+  // The theme changed: the other base map, and the app's layers in its colours.
+  $effect(() => {
+    const next = isDark() ? 'dark' : 'light'
+    if (!map || next === theme) return
+    theme = next
+    for (const [k, v] of Object.entries(PALETTE[next])) map.setGlobalStateProperty(k, v)
+    map.setStyle(STYLE[next], { globalState: PALETTE[next], transformStyle: keepOwn })
   })
 
   // New positions: animate from where markers are now.

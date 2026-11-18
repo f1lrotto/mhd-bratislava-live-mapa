@@ -33,7 +33,7 @@
     width: 100%;
     height: 44px;
     border-radius: 10px;
-    border: 1.5px solid #d4d8dd;
+    border: 1.5px solid var(--border);
     padding: 0 12px;
     font: inherit;
     font-size: 16px;

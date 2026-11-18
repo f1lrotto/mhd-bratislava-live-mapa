@@ -103,7 +103,7 @@
     font-size: 0.9rem;
   }
   .toggle[aria-pressed='true'] {
-    background: #fff;
+    background: var(--surface);
     border-color: var(--text);
   }
   .count {
@@ -146,7 +146,7 @@
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    border: 1.5px solid #fff;
-    box-shadow: 0 0 0 1px #d4d8dd;
+    border: 1.5px solid var(--surface);
+    box-shadow: 0 0 0 1px var(--border);
   }
 </style>

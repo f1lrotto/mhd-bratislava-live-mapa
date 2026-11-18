@@ -267,7 +267,7 @@
     height: 13px;
     border-radius: 50%;
     background: var(--accent);
-    box-shadow: 0 0 0 2.5px #fff;
+    box-shadow: 0 0 0 2.5px var(--surface);
   }
   .filter {
     display: flex;
@@ -289,7 +289,7 @@
   }
   .filter button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .board,
   .stations {
@@ -406,7 +406,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--surface);
     border: 2.5px solid var(--text);
   }
   .lines {

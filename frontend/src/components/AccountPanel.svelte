@@ -18,6 +18,7 @@
     resendVerification,
     resetPassword,
     setLang,
+    setTheme,
     setPreferences,
     signIn,
     signOut,
@@ -488,6 +489,14 @@
         >
       </div>
     </div>
+    <div class="pref">
+      <span id="pref-theme">{t('Vzhľad', 'Appearance')}</span>
+      <div class="tabs" role="group" aria-labelledby="pref-theme">
+        {#each [[null, t('Automaticky', 'Automatic')], ['light', t('Svetlý', 'Light')], ['dark', t('Tmavý', 'Dark')]] as const as [value, label] (value)}
+          <button class:active={prefs.theme === value} aria-pressed={prefs.theme === value} onclick={() => run(() => setTheme(value))}>{label}</button>
+        {/each}
+      </div>
+    </div>
 
     <h3 class="section">{t('Prihlásenie', 'Sign-in')}</h3>
     <button class="secondary" aria-expanded={open === 'password'} onclick={() => toggle('password')}>{t('Zmeniť heslo', 'Change password')}</button>
@@ -695,7 +704,7 @@
   input {
     height: 46px;
     border-radius: 10px;
-    border: 1.5px solid #d4d8dd;
+    border: 1.5px solid var(--border);
     padding: 0 12px;
     font: inherit;
     font-size: 16px;
@@ -724,8 +733,8 @@
     font-size: 0.9rem;
   }
   .note.ok {
-    color: #0f6b38;
-    background: #e3f5ea;
+    color: var(--ok-text);
+    background: var(--ok-bg);
     padding: 8px 10px;
     border-radius: 10px;
   }
@@ -742,11 +751,14 @@
     height: 44px;
     border-radius: 50%;
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
     display: grid;
     place-items: center;
     font-weight: 700;
     font-size: 1.1rem;
+  }
+  .pref + .pref {
+    margin-top: 14px;
   }
   .pref span {
     display: block;
@@ -804,7 +816,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 8px 0;
-    border-bottom: 1px solid var(--line, #e6e8eb);
+    border-bottom: 1px solid var(--line);
   }
   .danger-fill:hover {
     background: var(--bad-text);

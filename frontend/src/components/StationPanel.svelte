@@ -193,9 +193,9 @@
     width: 30px;
     height: 30px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--surface);
     border: 3px solid var(--text);
-    box-shadow: inset 0 0 0 4px #fff, inset 0 0 0 10px var(--text);
+    box-shadow: inset 0 0 0 4px var(--surface), inset 0 0 0 10px var(--text);
   }
   .actions {
     display: grid;
@@ -236,7 +236,7 @@
   }
   .plat button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .board {
     list-style: none;

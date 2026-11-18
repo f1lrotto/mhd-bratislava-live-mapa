@@ -134,7 +134,7 @@
     margin-right: 8px;
     border-radius: 50%;
     border: 3.5px solid var(--text);
-    background: #fff;
+    background: var(--surface);
   }
   .mark.to {
     border-radius: 3px;
@@ -146,11 +146,11 @@
     min-width: 0;
     height: 42px;
     border-radius: 10px;
-    border: 1.5px solid #d4d8dd;
+    border: 1.5px solid var(--border);
     padding: 0 10px;
     font: inherit;
     font-size: 16px;
-    background: #fff;
+    background: var(--surface);
   }
   input:focus {
     outline: none;
@@ -186,9 +186,9 @@
     margin: 4px 0 6px 22px;
     padding: 4px;
     border-radius: 12px;
-    background: #fff;
+    background: var(--surface);
     box-shadow: var(--shadow-sm);
-    border: 1px solid #e3e6ea;
+    border: 1px solid var(--line);
   }
   .list li {
     display: flex;

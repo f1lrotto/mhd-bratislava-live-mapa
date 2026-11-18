@@ -233,10 +233,10 @@
     stroke-width: 3px;
   }
   .grid {
-    stroke: #eceef1;
+    stroke: var(--line);
   }
   .grid.axis {
-    stroke: #d3d7dc;
+    stroke: var(--border);
   }
   .fill {
     fill: var(--accent);

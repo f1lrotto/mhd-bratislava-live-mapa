@@ -4,7 +4,7 @@
 import { track } from './analytics.svelte'
 import { t } from './i18n'
 import { isHere, markHere, pointValue } from './places'
-import { type Lang, prefs, setPrefs } from './prefs.svelte'
+import { type Lang, prefs, setPrefs, type Theme } from './prefs.svelte'
 import { app, navigate, type View } from './state.svelte'
 
 export type FavoriteKind = 'station' | 'line' | 'route'
@@ -25,6 +25,9 @@ export interface Preferences {
   lang?: Lang
   /** What the installed app opens to; unset is the favourites. */
   start?: 'favorites' | 'map'
+  /** The colour theme; this device's choice (lib/prefs.svelte.ts) until the user picks one signed in.
+   * Unset follows the device's setting. */
+  theme?: Theme
 }
 
 export interface User {
@@ -112,6 +115,9 @@ export async function loadProfile(retries = 4): Promise<void> {
   // The profile's language wins; a profile without one takes the language chosen on this device.
   if (profile.user && p.preferences.lang) setPrefs({ lang: p.preferences.lang })
   else if (profile.user && prefs.lang !== 'sk') await setPreferences({ lang: prefs.lang }).catch(() => {})
+  // The same for the theme.
+  if (profile.user && p.preferences.theme) setPrefs({ theme: p.preferences.theme })
+  else if (profile.user && prefs.theme) await setPreferences({ theme: prefs.theme }).catch(() => {})
   // A star tapped while signed out (or while the profile couldn't load) pins now.
   const pin = profile.pending
   if (profile.user && pin) {
@@ -290,6 +296,14 @@ export async function setLang(lang: Lang): Promise<void> {
   setPrefs({ lang })
   if (profile.user) await setPreferences({ lang })
   else track('preference_changed', { key: 'lang', value: lang })
+}
+
+/** Switch light or dark, or back to the device's setting (null): on this device, and in the
+ * profile when signed in. */
+export async function setTheme(theme: Theme | null): Promise<void> {
+  setPrefs({ theme })
+  if (profile.user) await setPreferences({ theme })
+  else track('preference_changed', { key: 'theme', value: theme ?? 'default' })
 }
 
 export function isFavorite(kind: FavoriteKind, ref: string | null): boolean {

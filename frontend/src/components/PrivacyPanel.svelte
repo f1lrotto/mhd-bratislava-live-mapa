@@ -121,7 +121,7 @@
       <p>Without consent, we store in your browser only what is strictly necessary for the site to work:</p>
       <ul>
         <li>your choice in this window (<code>analytics-consent</code>, <code>__ph_opt_in_out_…</code>),</li>
-        <li>the language you chose (<code>prefs</code>),</li>
+        <li>the language and appearance (light or dark) you chose (<code>prefs</code>),</li>
         <li>that you closed the offer to add the app to your home screen (<code>install-dismissed</code>, 14 days),</li>
         <li>
           how many entries in the What's new window you have already seen (<code>news-seen</code>), so that we only point
@@ -243,7 +243,7 @@
       <p>Bez súhlasu ukladáme do prehliadača len to, čo je nevyhnutné na fungovanie stránky:</p>
       <ul>
         <li>vašu voľbu v tomto okne (<code>analytics-consent</code>, <code>__ph_opt_in_out_…</code>),</li>
-        <li>jazyk, ktorý ste si vybrali (<code>prefs</code>),</li>
+        <li>jazyk a vzhľad (svetlý alebo tmavý), ktoré ste si vybrali (<code>prefs</code>),</li>
         <li>že ste zavreli ponuku pridať aplikáciu na plochu (<code>install-dismissed</code>, 14 dní),</li>
         <li>koľko noviniek v okne Čo je nové ste už videli (<code>news-seen</code>), aby sme vás upozornili len na nové,</li>
         <li>súbory aplikácie v pamäti prehliadača (service worker), aby sa nainštalovaná aplikácia otvorila aj offline,</li>

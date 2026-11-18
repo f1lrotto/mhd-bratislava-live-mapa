@@ -413,7 +413,7 @@
   }
   nav button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .topbar svg {
     width: 20px;
@@ -433,14 +433,14 @@
     height: 24px;
     border-radius: 50%;
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
     display: grid;
     place-items: center;
     font-size: 0.78rem;
     font-weight: 700;
   }
   nav button.active .initial {
-    background: #fff;
+    background: var(--surface);
     color: var(--text);
   }
   @media (min-width: 768px) {
@@ -486,7 +486,7 @@
     width: min(560px, calc(100% - 20px));
     background: var(--bad-bg);
     color: var(--bad-text);
-    border: 1px solid #f3b8c0;
+    border: 1px solid var(--bad-line);
     border-radius: 12px;
     padding: 10px 14px;
     font-weight: 600;
@@ -495,7 +495,7 @@
   }
   .banner.pick {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
     border: 0;
     display: flex;
     align-items: center;
@@ -507,7 +507,7 @@
     flex: none;
     padding: 6px 12px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(128, 128, 128, 0.28);
     font-weight: 700;
   }
   .hint-pill {
@@ -517,7 +517,7 @@
     transform: translateX(-50%);
     bottom: calc(52px + env(safe-area-inset-bottom));
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
     padding: 12px 18px;
     border-radius: 999px;
     font-weight: 600;

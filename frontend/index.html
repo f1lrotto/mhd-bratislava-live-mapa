@@ -11,6 +11,14 @@
     <meta name="apple-mobile-web-app-title" content="MHD naživo" />
     <meta name="mobile-web-app-capable" content="yes" />
     <title>MHD naživo · Bratislava</title>
+    <script>
+      // The theme before the app loads, so a dark page doesn't flash light (lib/theme.svelte.ts).
+      try {
+        const t = JSON.parse(localStorage.getItem('prefs') || '{}')?.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        document.documentElement.dataset.theme = t
+        if (t === 'dark') document.querySelector('meta[name="theme-color"]').content = '#1b1f24'
+      } catch {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

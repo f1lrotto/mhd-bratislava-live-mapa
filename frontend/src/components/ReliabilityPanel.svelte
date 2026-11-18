@@ -384,7 +384,7 @@
   }
   .tabs button.active {
     background: var(--text);
-    color: #fff;
+    color: var(--on-text);
   }
   .tab-name {
     flex: 1;
