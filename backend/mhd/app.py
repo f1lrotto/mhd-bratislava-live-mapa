@@ -29,7 +29,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import derive, heartbeat, idsbk, lineview, nightly
+from . import derive, heartbeat, idsbk, lineview, nightly, replay
 from .history import History
 from .logger import PollLogger
 from .planner import DETOUR, MAX_RIDES, WALK_ONLY_M, WALK_SPEED, Planner
@@ -310,6 +310,24 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             logging.getLogger(__name__).exception("history failed")
             body["history"] = None
         return JSONResponse(body, headers=no_store)
+
+    @app.get("/api/replay")
+    def replay_range():
+        return JSONResponse(replay.available(DATA_DIR / "logs"), headers=no_store)
+
+    # Requests waiting for a slot hold no worker thread, so scrubbing never starves /api/live.
+    replay_slots = asyncio.Semaphore(replay.MAX_READERS)
+
+    @app.get("/api/replay/{t}")
+    async def replay_chunk(t: int):
+        """The logged positions of the 10-minute chunk holding Unix time t (replay.py)."""
+        if t < 0:
+            return JSONResponse({"error": "bad time"}, status_code=400)
+        async with replay_slots:
+            body = await asyncio.to_thread(replay.chunk, DATA_DIR / "logs", t)
+        # A finished chunk never changes; the browser keeps it while the user scrubs back and forth.
+        cache = "private, max-age=86400" if body["complete"] else "no-store"
+        return JSONResponse(body, headers={"Cache-Control": cache})
 
     static_dir = DATA_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)

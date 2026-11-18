@@ -34,7 +34,7 @@ from .static import TZ, day_start
 
 log = logging.getLogger(__name__)
 
-RAW_DAYS = 30  # the late-share baseline (history.py) looks back four weeks
+RAW_DAYS = 30  # the late-share baseline (history.py) looks back four weeks; map replay (replay.py) covers this span
 SETTLE_DAYS = 2  # a service day's night trips end the next morning; wait until it's surely over
 BUCKET_S = 600
 
