@@ -21,8 +21,10 @@
   },
   "dependencies": {
     "@fontsource/ibm-plex-sans": "5.3.0",
+    "@simplewebauthn/browser": "^13.3.0",
     "d3-contour": "^4.0.3",
     "maplibre-gl": "^6.18.0",
-    "posthog-js": "1.450.1"
+    "posthog-js": "1.450.1",
+    "uqr": "^0.1.3"
   }
 }

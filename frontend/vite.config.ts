@@ -28,7 +28,8 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: true,
-    proxy: { '/api': `http://127.0.0.1:${process.env.API_PORT ?? 8799}` },
+    // The browser's host and scheme reach the API: the accounts server checks requests' origin against them.
+    proxy: { '/api': { target: `http://127.0.0.1:${process.env.API_PORT ?? 8799}`, changeOrigin: false } },
   },
   build: { chunkSizeWarningLimit: 1200 },
 })

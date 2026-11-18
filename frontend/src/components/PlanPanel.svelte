@@ -3,11 +3,13 @@
   import { track } from '../lib/analytics.svelte'
   import { planQuery, poll, refreshPlan } from '../lib/api'
   import { delayBand, delayText, durationText, fromLocalInput, hm, isRegional, minsUntil, plural, toLocalInput, dayText } from '../lib/format'
-  import { placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
+  import { markHere, placeLabel, rideSig, pointValue, setPlanEnd } from '../lib/places'
+  import { routeFavorite } from '../lib/profile.svelte'
   import { routeOverlay } from '../lib/speeds'
   import { app, navigate, setSpeed, SLOW_POLL_MS } from '../lib/state.svelte'
   import type { FallbackOption, PlanOption, PlanReason, RideLeg } from '../lib/types'
   import DepartPicker from './DepartPicker.svelte'
+  import FavButton from './FavButton.svelte'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
   import PlaceInput from './PlaceInput.svelte'
@@ -20,6 +22,7 @@
   const sel = $derived(opt != null ? (options[Math.min(opt, options.length - 1)] ?? null) : null)
   const now = $derived(app.tick + app.skewMs)
   const reason = $derived(plan?.data?.reason ?? null)
+  const fav = $derived(routeFavorite(from, to))
 
   // --- the form: on phones it folds into one summary line once both ends are set ------------------
   let fromInput = $state<HTMLInputElement>()
@@ -165,7 +168,7 @@
     navigator.geolocation.getCurrentPosition(
       (p) => {
         geoBusy = null
-        setPlanEnd(end, pointValue(p.coords.latitude, p.coords.longitude), 'Moja poloha')
+        setPlanEnd(end, markHere(pointValue(p.coords.latitude, p.coords.longitude)), 'Moja poloha')
       },
       (e) => {
         geoBusy = null
@@ -368,6 +371,7 @@
   {#snippet header()}
     <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
     <strong>Trasa</strong>
+    {#if fav}<FavButton kind="route" ref={fav.ref} names={fav.names} label="trasa {placeLabel(from)} → {placeLabel(to)}" />{/if}
   {/snippet}
 
   {#if sel}

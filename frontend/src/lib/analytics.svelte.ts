@@ -43,6 +43,11 @@ export function startAnalytics(): void {
       cookieless_mode: 'on_reject',
       opt_out_capturing_by_default: true,
       disable_session_recording: true,
+      // Clicks aren't recorded: elements' attributes, such as the profile button's label with the
+      // signed-in email, would go with them. The privacy page lists the events we send.
+      autocapture: false,
+      rageclick: false,
+      capture_dead_clicks: false,
       before_send: (event) => {
         if (!event) return event
         // Query strings can hold a planned trip's coordinates ("Moja poloha"): never send them.

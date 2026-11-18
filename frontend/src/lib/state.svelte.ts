@@ -3,6 +3,7 @@ import type { CityStatus, LineInfo, LineView, Live, Plan, Reach, SpeedData, Spee
 
 // What the side panel / bottom sheet shows. Each view has a URL so it can be shared:
 //   /linka/83?smer=1   /linka/83/spolahlivost?smer=1&dni=vikendy   /vozidlo/1843   /zastavka/<station code>?nastupiste=<stop id>   /stav   /linky   /filtre   /sukromie
+//   /oblubene (the signed-in user's favourites)   /ucet (sign-in, sign-up and the account)
 //   /trasa?z=<code|lat,lon>&do=<code|lat,lon>&cas=<ISO>&moznost=<1-based option>
 //   /dostupnost?z=<code|lat,lon>&cas=<ISO>&min=<30|45|60>
 //   /blizko (departures near the user; the position is never in the URL, so a shared link locates its opener)
@@ -22,6 +23,8 @@ export type View =
   | { kind: 'filters' }
   | { kind: 'privacy' }
   | { kind: 'replay'; at: string | null }
+  | { kind: 'favorites' }
+  | { kind: 'account' }
 
 export interface Filters {
   types: VehicleType[] // empty = all
@@ -111,6 +114,8 @@ export function parseUrl(loc: Location = location): { view: View; filters: Filte
   else if (parts[0] === 'filtre') view = { kind: 'filters' }
   else if (parts[0] === 'sukromie') view = { kind: 'privacy' }
   else if (parts[0] === 'zaznam') view = { kind: 'replay', at: q.get('cas') }
+  else if (parts[0] === 'oblubene') view = { kind: 'favorites' }
+  else if (parts[0] === 'ucet') view = { kind: 'account' }
   const list = (k: string) => (q.get(k) ?? '').split(',').map((s) => s.trim()).filter(Boolean)
   const sp = q.get('rychlost')
   const speed: SpeedOverlay | null =
@@ -182,6 +187,12 @@ export function buildUrl(view: View, filters: Filters, speed: SpeedOverlay | nul
     case 'replay':
       path = '/zaznam'
       if (view.at) q.set('cas', view.at)
+      break
+    case 'favorites':
+      path = '/oblubene'
+      break
+    case 'account':
+      path = '/ucet'
       break
   }
   if (filters.types.length) q.set('typ', filters.types.map((t) => TYPE_NAME[t]).join(','))

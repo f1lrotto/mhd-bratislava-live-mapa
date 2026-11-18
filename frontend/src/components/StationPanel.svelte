@@ -3,6 +3,7 @@
   import { hm, minsUntil, plural } from '../lib/format'
   import { app, navigate } from '../lib/state.svelte'
   import type { Departure, StationBoard } from '../lib/types'
+  import FavButton from './FavButton.svelte'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
 
@@ -75,6 +76,7 @@
         {#if platforms.length > 1}{plural(platforms.length, 'nástupište', 'nástupištia', 'nástupíšť')}{:else}Zastávka{/if}
       </span>
     </div>
+    {#if station}<FavButton kind="station" ref={code} label={name} />{/if}
   {/snippet}
 
   {#if !station && !board && !error}

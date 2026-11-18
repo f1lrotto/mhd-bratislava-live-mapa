@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte'
+  import AccountPanel from './components/AccountPanel.svelte'
   import ConsentBanner from './components/ConsentBanner.svelte'
+  import FavoritesPanel from './components/FavoritesPanel.svelte'
   import FiltersPanel from './components/FiltersPanel.svelte'
   import InstallPrompt from './components/InstallPrompt.svelte'
   import LinePanel from './components/LinePanel.svelte'
@@ -15,8 +17,10 @@
   import SpeedCard from './components/SpeedCard.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
+  import { standalone } from './lib/analytics.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshSpeeds, refreshStatus, speedQuery } from './lib/api'
   import { passes } from './lib/filter'
+  import { loadProfile, profile } from './lib/profile.svelte'
   import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, NO_FILTERS, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
@@ -30,6 +34,17 @@
 
   onMount(() => {
     loadStatic().catch((e) => (staticError = (e as Error).message))
+    // The installed app opens to the user's favourites, unless they chose the map in their profile
+    // (a link to a panel still opens that panel).
+    const launch = standalone && app.view.kind === 'none'
+    // loadProfile() resolves once an attempt succeeds or every retry failed.
+    loadProfile().then(() => {
+      const start = profile.preferences.start ?? 'favorites'
+      if (launch && profile.user && start === 'favorites' && app.view.kind === 'none') navigate({ kind: 'favorites' }, { replace: true })
+    })
+    // Back in the app (another tab, the phone unlocked): favourites pinned on another device show up.
+    const onVisible = () => !document.hidden && profile.loaded && loadProfile()
+    document.addEventListener('visibilitychange', onVisible)
     const stopLive = poll(refreshLive)
     const tick = setInterval(() => (app.tick = Date.now()), 1000)
     const onPop = () => {
@@ -57,6 +72,7 @@
       clearInterval(tick)
       removeEventListener('popstate', onPop)
       removeEventListener('keydown', onKey)
+      document.removeEventListener('visibilitychange', onVisible)
     }
   })
 
@@ -107,7 +123,7 @@
   // On phones the nav buttons sit in a menu behind a burger button.
   let menuOpen = $state(false)
 
-  function toggle(kind: 'lines' | 'filters' | 'status' | 'plan' | 'reach' | 'replay') {
+  function toggle(kind: 'favorites' | 'account' | 'lines' | 'filters' | 'status' | 'plan' | 'reach' | 'replay') {
     menuOpen = false
     if (app.view.kind === kind) closePanel()
     else if (kind === 'plan') navigate({ kind, from: null, to: null, at: null, opt: null })
@@ -149,30 +165,50 @@
       {#if nFilters && !menuOpen}<span class="count" aria-label="{nFilters} aktívne filtre">{nFilters}</span>{/if}
     </button>
     <nav id="menu" class:open={menuOpen}>
-      <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa">
+      <button class:active={app.view.kind === 'favorites'} onclick={() => toggle('favorites')} aria-pressed={app.view.kind === 'favorites'} aria-label="Obľúbené" title="Obľúbené">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" /></svg>
+        <span class="label">Obľúbené</span>
+      </button>
+      <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa" title="Trasa">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
-        <span>Trasa</span>
+        <span class="label">Trasa</span>
       </button>
-      <button class:active={app.view.kind === 'reach'} onclick={() => toggle('reach')} aria-pressed={app.view.kind === 'reach'} aria-label="Kam sa dostanem">
+      <button class:active={app.view.kind === 'reach'} onclick={() => toggle('reach')} aria-pressed={app.view.kind === 'reach'} aria-label="Kam sa dostanem" title="Kam sa dostanem">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
-        <span>Dosah</span>
+        <span class="label">Dosah</span>
       </button>
-      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky">
+      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky" title="Linky">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-        <span>Linky</span>
+        <span class="label">Linky</span>
       </button>
-      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'} aria-label="Filtre a legenda">
+      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'} aria-label="Filtre a legenda" title="Filtre a legenda">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16l-6 7v5l-4 2v-7z" /></svg>
-        <span>Filtre</span>
+        <span class="label">Filtre</span>
         {#if nFilters}<span class="count" aria-label="{nFilters} aktívne">{nFilters}</span>{/if}
       </button>
-      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'} aria-label="Stav dopravy">
+      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'} aria-label="Stav dopravy" title="Stav dopravy">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M12 19V5M19 19v-6" /></svg>
-        <span>Stav</span>
+        <span class="label">Stav</span>
       </button>
-      <button class:active={app.view.kind === 'replay'} onclick={() => toggle('replay')} aria-pressed={app.view.kind === 'replay'} aria-label="Záznam jázd">
+      <button class:active={app.view.kind === 'replay'} onclick={() => toggle('replay')} aria-pressed={app.view.kind === 'replay'} aria-label="Záznam jázd" title="Záznam jázd">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></svg>
-        <span>Záznam</span>
+        <span class="label">Záznam</span>
+      </button>
+      <!-- The profile: the user's initial when signed in. Icon only on wide screens, labelled in the phone menu. -->
+      <button
+        class="acct"
+        class:active={app.view.kind === 'account'}
+        onclick={() => toggle('account')}
+        aria-pressed={app.view.kind === 'account'}
+        aria-label={profile.user ? `Profil (${profile.user.email})` : profile.failed ? 'Profil' : 'Prihlásiť sa'}
+        title={profile.user ? `Profil: ${profile.user.email}` : profile.failed ? 'Profil' : 'Prihlásiť sa'}
+      >
+        {#if profile.user}
+          <span class="initial" aria-hidden="true">{profile.user.email[0].toUpperCase()}</span>
+        {:else}
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+        {/if}
+        <span class="label acct-label">{profile.user || profile.failed ? 'Profil' : 'Prihlásiť sa'}</span>
       </button>
     </nav>
   </header>
@@ -231,6 +267,10 @@
       <PrivacyPanel />
     {:else if app.view.kind === 'replay'}
       <ReplayPanel at={app.view.at} />
+    {:else if app.view.kind === 'favorites'}
+      <FavoritesPanel />
+    {:else if app.view.kind === 'account'}
+      <AccountPanel />
     {/if}
   {/key}
 
@@ -348,6 +388,44 @@
   }
   .burger {
     display: none;
+  }
+  .initial {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--text);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+  nav button.active .initial {
+    background: #fff;
+    color: var(--text);
+  }
+  @media (min-width: 768px) {
+    .acct-label {
+      display: none;
+    }
+    nav .acct {
+      padding: 0 10px;
+    }
+  }
+  /* Narrow desktops: the nav's eight buttons fit as icons only (each has a tooltip). */
+  @media (min-width: 768px) and (max-width: 1279.98px) {
+    nav .label {
+      display: none;
+    }
+    nav button {
+      padding: 0 11px;
+    }
+  }
+  /* Narrow desktops: the nav needs the room of "Aktualizované". */
+  @media (max-width: 1023.98px) {
+    .hide-sm {
+      display: none;
+    }
   }
   .count {
     min-width: 18px;

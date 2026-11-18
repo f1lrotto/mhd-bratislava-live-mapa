@@ -40,6 +40,18 @@ export function searchStations(query: string, limit = 8): { code: string; name: 
   return hits.slice(0, limit)
 }
 
+// Points that are the user's location ("Moja poloha"), known by value rather than by their label,
+// which the UI may translate: a pinned route stores them as "here", never as coordinates.
+const herePoints = new Set<string>()
+
+/** Mark a point as the user's location; returns it. */
+export function markHere(v: string): string {
+  herePoints.add(v)
+  return v
+}
+
+export const isHere = (v: string): boolean => herePoints.has(v)
+
 /** Set one end of the open plan (a station code or a point), keeping the other end and the time;
  * in the reachability view, its starting point. */
 export function setPlanEnd(end: 'from' | 'to', value: string, name?: string): void {

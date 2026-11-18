@@ -2,7 +2,7 @@
   import { untrack } from 'svelte'
   import { poll, reachQuery, refreshReach } from '../lib/api'
   import { hm } from '../lib/format'
-  import { placeLabel, pointValue, setPlanEnd } from '../lib/places'
+  import { markHere, placeLabel, pointValue, setPlanEnd } from '../lib/places'
   import { REACH_COLORS, REACH_LIMITS, reachBands, reachShapes } from '../lib/reach'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
   import DepartPicker from './DepartPicker.svelte'
@@ -53,7 +53,7 @@
     navigator.geolocation.getCurrentPosition(
       (p) => {
         geoBusy = false
-        setPlanEnd('from', pointValue(p.coords.latitude, p.coords.longitude), 'Moja poloha')
+        setPlanEnd('from', markHere(pointValue(p.coords.latitude, p.coords.longitude)), 'Moja poloha')
       },
       (e) => {
         geoBusy = false

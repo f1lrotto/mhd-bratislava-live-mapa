@@ -2,6 +2,7 @@
   import { bandColor, delayBand, delayText, minutes, plural, TYPE_LABELS, vehicleName } from '../lib/format'
   import { app, navigate } from '../lib/state.svelte'
   import type { LineDirection, RibbonVehicle } from '../lib/types'
+  import FavButton from './FavButton.svelte'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
 
@@ -78,6 +79,7 @@
       <strong>Linka {line}</strong>
       <span class="muted">{regional ? `regionálny autobus${info.operator ? ` · ${info.operator}` : ''}` : info ? TYPE_LABELS[info.type] : ''}</span>
     </div>
+    {#if info}<FavButton kind="line" ref={line} label="linka {line}" />{/if}
   {/snippet}
 
   {#if !lv}

@@ -1,4 +1,5 @@
 import { track as trackEvent } from './analytics.svelte'
+import { isHere } from './places'
 import { app, POLL_MS, type SpeedOverlay } from './state.svelte'
 import type { CityStatus, LineInfo, LineView, Live, Plan, PlanOption, Reach, SpeedData, SpeedGeometry, StationInfo, StopInfo } from './types'
 
@@ -103,7 +104,7 @@ export function drawnPlanOption(): PlanOption | null {
 function planKinds(query: string): Record<string, string> {
   const q = new URLSearchParams(query.split('?')[1])
   const kind = (end: 'from' | 'to') =>
-    !/^-?[\d.]+,-?[\d.]+$/.test(q.get(end) ?? '') ? 'stop' : q.get(`${end}Name`) === 'Moja poloha' ? 'my_location' : 'map_point'
+    !/^-?[\d.]+,-?[\d.]+$/.test(q.get(end) ?? '') ? 'stop' : isHere(q.get(end) ?? '') ? 'my_location' : 'map_point'
   return { from: kind('from'), to: kind('to'), departure: q.has('at') ? 'later' : 'now' }
 }
 
