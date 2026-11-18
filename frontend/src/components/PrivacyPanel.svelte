@@ -49,9 +49,10 @@
       odkiaľ ste prišli, prehliadač, operačný systém, typ zariadenia, približnú krajinu a mesto odvodené z IP adresy a to,
       či ste stránku otvorili ako nainštalovanú aplikáciu. Pri hľadaní trasy a mapy dosahu posielame len to, či ste
       zadali zastávku, svoju polohu alebo bod na mape (pri dosahu aj zvolený počet minút), nikdy samotné miesto.
-      Pri obľúbených posielame len to, či ste pripli alebo odobrali zastávku, linku alebo trasu, a pri účte len to, že ste ho vytvorili,
-      prihlásili sa, zmenili heslo alebo ho zrušili; váš e-mail ani obľúbené PostHog nedostane a návštevy s účtom
-      nespájame.
+      Pri obľúbených posielame len to, či ste pripli alebo odobrali zastávku, linku alebo trasu, a pri účte len to, ktorú funkciu ste použili
+      (vytvorenie, prihlásenie a jeho spôsob, odhlásenie, zmenu hesla alebo e-mailu, overenie e-mailu, dvojstupňové
+      overenie, prístupové kľúče, zmenu nastavenia a jeho hodnotu, stiahnutie údajov, zrušenie účtu), a keď sa niečo
+      nepodarí, kód chyby. Váš e-mail, heslo, kódy ani obľúbené PostHog nedostane a návštevy s účtom nespájame.
     </p>
     <p>
       V tomto režime sa do prehliadača nič neukladá. PostHog rozlišuje návštevníkov podľa odtlačku z IP adresy a

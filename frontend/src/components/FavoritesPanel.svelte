@@ -1,5 +1,6 @@
 <script lang="ts">
   import { TYPE_LABELS } from '../lib/format'
+  import { track } from '../lib/analytics.svelte'
   import { endLabel, favoriteView, HERE, profile, routeEnds, type Favorite } from '../lib/profile.svelte'
   import { app, navigate } from '../lib/state.svelte'
   import FavButton from './FavButton.svelte'
@@ -21,6 +22,7 @@
 
   let busy = $state<string | null>(null)
   async function open(f: Favorite) {
+    track('favorite_opened', { kind: f.kind })
     if (f.kind === 'route' && f.ref.split('>').includes(HERE)) busy = f.ref
     const view = await favoriteView(f)
     busy = null

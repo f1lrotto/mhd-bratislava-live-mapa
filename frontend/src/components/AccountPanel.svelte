@@ -23,6 +23,7 @@
     signOutOthers,
   } from '../lib/profile.svelte'
   import { app, navigate } from '../lib/state.svelte'
+  import { track } from '../lib/analytics.svelte'
   import Panel from './Panel.svelte'
 
   // Links in account emails return here: ?token= (set a new password), ?overene=1 (address
@@ -33,6 +34,8 @@
     q.get('error') ? 'Odkaz z e-mailu už neplatí. Požiadajte o nový.' : q.get('overene') === '1' ? 'E-mail je overený. Ďakujeme.' : null,
   )
   onMount(() => {
+    if (q.get('overene') === '1') track('email_verified')
+    else if (q.get('error')) track('email_link_failed', { error: q.get('error') })
     if (location.search) navigate({ kind: 'account' }, { replace: true })
   })
 
@@ -532,7 +535,9 @@
     <button class="secondary" disabled={busy} onclick={() => run(signOut)}>Odhlásiť sa</button>
 
     <h3 class="section">Vaše údaje</h3>
-    <a class="secondary" href="/api/auth/profile" download="mhd-nazivo-ucet.json">Stiahnuť moje údaje</a>
+    <a class="secondary" href="/api/auth/profile" download="mhd-nazivo-ucet.json" onclick={() => track('data_downloaded')}
+      >Stiahnuť moje údaje</a
+    >
     <button class="secondary danger" aria-expanded={open === 'delete'} onclick={() => toggle('delete')}>Zrušiť účet…</button>
     {#if open === 'delete'}
       <form class="sub" onsubmit={remove}>

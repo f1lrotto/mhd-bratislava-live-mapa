@@ -17,7 +17,7 @@
   import SpeedCard from './components/SpeedCard.svelte'
   import StationPanel from './components/StationPanel.svelte'
   import VehiclePanel from './components/VehiclePanel.svelte'
-  import { standalone } from './lib/analytics.svelte'
+  import { standalone, track } from './lib/analytics.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshSpeeds, refreshStatus, speedQuery } from './lib/api'
   import { passes } from './lib/filter'
   import { loadProfile, profile } from './lib/profile.svelte'
@@ -40,7 +40,10 @@
     // loadProfile() resolves once an attempt succeeds or every retry failed.
     loadProfile().then(() => {
       const start = profile.preferences.start ?? 'favorites'
-      if (launch && profile.user && start === 'favorites' && app.view.kind === 'none') navigate({ kind: 'favorites' }, { replace: true })
+      if (launch && profile.user && start === 'favorites' && app.view.kind === 'none') {
+        navigate({ kind: 'favorites' }, { replace: true })
+        track('opened_to_favorites')
+      }
     })
     // Back in the app (another tab, the phone unlocked): favourites pinned on another device show up.
     const onVisible = () => !document.hidden && profile.loaded && loadProfile()

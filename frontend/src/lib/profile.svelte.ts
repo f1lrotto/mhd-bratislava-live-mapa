@@ -119,15 +119,31 @@ export async function loadProfile(retries = 4): Promise<void> {
 /** Where the link in a verification email returns to. */
 const VERIFIED_URL = '/ucet?overene=1'
 
+/** Run a sign-in step; when it fails, PostHog gets the step and Better Auth's error code (never
+ * the email or what was typed). */
+async function attempt<T>(event: string, method: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    track(event, { method, error: (e as Error).message })
+    throw e
+  }
+}
+
 /** Sign in or up; false when the account also asks for a code (then call verifyCode). */
 export async function signIn(mode: 'sign-in' | 'sign-up', email: string, password: string): Promise<boolean> {
   // Better Auth requires a name; the app doesn't ask for one.
-  const r = await call<{ twoFactorRedirect?: boolean }>(
-    `/${mode}/email`,
-    mode === 'sign-up' ? { email, password, name: '', callbackURL: VERIFIED_URL } : { email, password },
+  const r = await attempt(mode === 'sign-up' ? 'sign_up_failed' : 'sign_in_failed', 'password', () =>
+    call<{ twoFactorRedirect?: boolean }>(
+      `/${mode}/email`,
+      mode === 'sign-up' ? { email, password, name: '', callbackURL: VERIFIED_URL } : { email, password },
+    ),
   )
-  if (r?.twoFactorRedirect) return false
-  track(mode === 'sign-up' ? 'account_created' : 'signed_in')
+  if (r?.twoFactorRedirect) {
+    track('two_factor_asked')
+    return false
+  }
+  track(mode === 'sign-up' ? 'account_created' : 'signed_in', mode === 'sign-up' ? undefined : { method: 'password' })
   await loadProfile()
   return true
 }
@@ -135,33 +151,40 @@ export async function signIn(mode: 'sign-in' | 'sign-up', email: string, passwor
 /** The second step of signing in: a code from the authenticator app, or a backup code. A trusted
  * device isn't asked again for 30 days. */
 export async function verifyCode(code: string, backup: boolean, trustDevice: boolean): Promise<void> {
-  await call(backup ? '/two-factor/verify-backup-code' : '/two-factor/verify-totp', { code, trustDevice })
-  track('signed_in')
+  const method = backup ? 'backup_code' : 'authenticator'
+  await attempt('sign_in_failed', method, () => call(backup ? '/two-factor/verify-backup-code' : '/two-factor/verify-totp', { code, trustDevice }))
+  track('signed_in', { method, trust_device: trustDevice })
   await loadProfile()
 }
 
 /** Sign in with a passkey: the browser asks which one, then the device unlocks it. */
 export async function signInWithPasskey(): Promise<void> {
-  const { startAuthentication } = await import('@simplewebauthn/browser')
-  const optionsJSON = await call<Parameters<typeof startAuthentication>[0]['optionsJSON']>('/passkey/generate-authenticate-options')
-  const response = await startAuthentication({ optionsJSON }).catch(webAuthnError)
-  await call('/passkey/verify-authentication', { response })
-  track('signed_in')
+  await attempt('sign_in_failed', 'passkey', async () => {
+    const { startAuthentication } = await import('@simplewebauthn/browser')
+    const optionsJSON = await call<Parameters<typeof startAuthentication>[0]['optionsJSON']>('/passkey/generate-authenticate-options')
+    const response = await startAuthentication({ optionsJSON }).catch(webAuthnError)
+    await call('/passkey/verify-authentication', { response })
+  })
+  track('signed_in', { method: 'passkey' })
   await loadProfile()
 }
 
 /** Adding a passkey asks for the password: a passkey alone signs in. */
 export async function addPasskey(password: string): Promise<void> {
-  await call('/profile/confirm-password', { password })
-  const { startRegistration } = await import('@simplewebauthn/browser')
-  const optionsJSON = await call<Parameters<typeof startRegistration>[0]['optionsJSON']>('/passkey/generate-register-options')
-  const response = await startRegistration({ optionsJSON }).catch(webAuthnError)
-  await call('/passkey/verify-registration', { response })
+  await attempt('passkey_add_failed', 'passkey', async () => {
+    await call('/profile/confirm-password', { password })
+    const { startRegistration } = await import('@simplewebauthn/browser')
+    const optionsJSON = await call<Parameters<typeof startRegistration>[0]['optionsJSON']>('/passkey/generate-register-options')
+    const response = await startRegistration({ optionsJSON }).catch(webAuthnError)
+    await call('/passkey/verify-registration', { response })
+  })
+  track('passkey_added')
   await loadProfile()
 }
 
 export async function removePasskey(id: string): Promise<void> {
   await call('/passkey/delete-passkey', { id })
+  track('passkey_removed')
   await loadProfile()
 }
 
@@ -176,26 +199,33 @@ function webAuthnError(e: Error & { code?: string }): never {
 /** Start turning on two-step sign-in: the secret to add to an authenticator app, and backup codes.
  * It is on once confirmTwoFactor() checks a code from the app. */
 export async function enableTwoFactor(password: string): Promise<{ totpURI: string; backupCodes: string[] }> {
-  return call('/two-factor/enable', { password })
+  const r = await call<{ totpURI: string; backupCodes: string[] }>('/two-factor/enable', { password })
+  track('two_factor_setup_started')
+  return r
 }
 
 export async function confirmTwoFactor(code: string): Promise<void> {
   await call('/two-factor/verify-totp', { code })
+  track('two_factor_enabled')
   await loadProfile()
 }
 
 export async function disableTwoFactor(password: string): Promise<void> {
   await call('/two-factor/disable', { password })
+  track('two_factor_disabled')
   await loadProfile()
 }
 
 /** New backup codes; the old ones stop working. */
 export async function newBackupCodes(password: string): Promise<string[]> {
-  return (await call<{ backupCodes: string[] }>('/two-factor/generate-backup-codes', { password })).backupCodes
+  const { backupCodes } = await call<{ backupCodes: string[] }>('/two-factor/generate-backup-codes', { password })
+  track('backup_codes_renewed')
+  return backupCodes
 }
 
 export async function signOut(): Promise<void> {
   await call('/sign-out', {})
+  track('signed_out')
   profile.user = null
   profile.favorites = []
   profile.preferences = {}
@@ -219,28 +249,36 @@ export async function changePassword(currentPassword: string, newPassword: strin
  * so a stolen session can't move the account to another address. */
 export async function changeEmail(newEmail: string, password: string): Promise<void> {
   await call('/change-email', { newEmail, password, callbackURL: VERIFIED_URL })
+  track('email_change_requested')
   await loadProfile()
 }
 
 export async function resendVerification(): Promise<void> {
-  if (profile.user) await call('/send-verification-email', { email: profile.user.email, callbackURL: VERIFIED_URL })
+  if (!profile.user) return
+  await call('/send-verification-email', { email: profile.user.email, callbackURL: VERIFIED_URL })
+  track('verification_email_resent')
 }
 
 /** Emails a link to set a new password; the same answer whether the address has an account or not. */
 export async function requestPasswordReset(email: string): Promise<void> {
   await call('/request-password-reset', { email, redirectTo: '/ucet' })
+  track('password_reset_requested')
 }
 
 export async function resetPassword(token: string, newPassword: string): Promise<void> {
   await call('/reset-password', { token, newPassword })
+  track('password_reset')
 }
 
 export async function signOutOthers(): Promise<void> {
   await call('/revoke-other-sessions', {})
+  track('other_devices_signed_out')
 }
 
 export async function setPreferences(p: { [K in keyof Preferences]: Preferences[K] | null }): Promise<void> {
   profile.preferences = (await call<{ preferences: Preferences }>('/profile/preferences', p)).preferences
+  // Values are the app's own choices (such as start: map); null is back to the default.
+  for (const [key, value] of Object.entries(p)) track('preference_changed', { key, value: value ?? 'default' })
 }
 
 export function isFavorite(kind: FavoriteKind, ref: string | null): boolean {
