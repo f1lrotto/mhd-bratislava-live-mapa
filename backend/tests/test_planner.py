@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 
 from mhd.geo import to_lonlat, to_xy
-from mhd.planner import Planner, TZ
+from mhd.planner import Planner, TZ, walk_seconds
 
 BASE = to_xy(17.10, 48.15)
 MON = (2026, 11, 16)
@@ -273,6 +273,9 @@ def test_api_plan_takes_a_naive_time_as_bratislava_and_gives_a_reason(tmp_path, 
         assert body["live"] is False  # a past time doesn't get today's delays
         assert c.get("/api/plan", params={"from": "1", "to": "1"}).json() == {
             "options": [], "reason": "same_place", "live": True}
+        body = c.get("/api/reach", params={"from": "1", "at": "2026-11-16T07:55", "min": 20}).json()
+        assert body["depart"] == iso(7, 55) and body["limit"] == 1200 and body["live"] is False
+        assert [*(round(v, 5) for v in ll(5000)), 900] in body["stops"]  # B at 08:10
 
 
 def test_late_feeder_puts_the_transfer_at_risk_and_tracking_shows_it_missed(tmp_path):
@@ -369,3 +372,26 @@ def test_approach_runs_from_the_stop_behind_the_vehicle_to_the_boarding_stop(tmp
     assert p.approach("t", "C", 0) == [r(ll(0)), r(ll(1000)), r(ll(2000))]  # waiting at A
     assert p.approach("t", "B", 3) is None  # already past B
     assert p.approach("nope", "B", 0) is None
+
+
+def test_reach_gives_the_earliest_arrival_at_every_stop_within_the_limit(tmp_path):
+    # From A at 08:00: line 1 reaches B at 08:10 and C at 08:20, but line 2 leaves later and is at C
+    # by 08:15. D is a 200 m walk from C; E is beyond 30 min. Trip "early" left A before 08:00.
+    stops = {"A": (0, 0, "1"), "B": (3000, 0, "2"), "C": (6000, 0, "3"), "D": (6200, 0, "4"), "E": (9000, 0, "5")}
+    p = _write(tmp_path, stops, {"1": {"0": ["A", "B", "C"]}, "2": {"0": ["A", "C"]}, "3": {"0": ["C", "E"]}}, [
+        ("early", "1", "0", "work", [hms(7, 58), hms(8, 6), hms(8, 16)]),
+        ("slow", "1", "0", "work", [hms(8, 2), hms(8, 10), hms(8, 20)]),
+        ("fast", "2", "0", "work", [hms(8, 5), hms(8, 15)]),
+        ("on", "3", "0", "work", [hms(8, 25), hms(8, 40)]),
+    ])
+    key = lambda x: tuple(round(v, 5) for v in ll(stops[x][0]))  # noqa: E731
+
+    def times(limit_min, delays=None):
+        res = p.reach({"station": "1"}, at(8, 0), limit_min * 60, delays)
+        got = {(lon, lat): t for lon, lat, t in res["stops"]}
+        return {s: got[key(s)] for s in stops if key(s) in got}
+
+    assert times(30) == {"A": 0, "B": 600, "C": 900, "D": 900 + walk_seconds(200)}
+    assert times(45)["E"] == 2400
+    # "early" running 3 min late leaves A at 08:01 and is at B by 08:09.
+    assert times(30, {"early": 180})["B"] == 540

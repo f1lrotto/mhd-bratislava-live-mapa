@@ -242,6 +242,26 @@ class Planner:
         return best
 
     def _raptor(self, day: _Day, src: dict, egress: dict, delays: dict[tuple[int, int], int], mind: int):
+        ride, rpar, ready, qpar = self._rounds(day, src, egress, delays, mind)
+        # Best arrival per round, by vehicle or by a transfer walk, then the egress walk.
+        found = []
+        for k in range(1, len(ride)):
+            best = None
+            for s, eg in sorted(egress.items()):
+                if ride[k][s] + eg < (best[0] if best else INF):
+                    best = (ride[k][s] + eg, s, "ride")
+                q = qpar[k][s]
+                if q is not None and q[0] == "walk" and ready[k][s] + eg < (best[0] if best else INF):
+                    best = (ready[k][s] + eg, s, "ready")
+            if best:
+                found.append(self._path(best[1], k, best[2], rpar, qpar))
+        return found
+
+    def _rounds(self, day: _Day, src: dict, egress: dict, delays: dict[tuple[int, int], int], mind: int,
+                tgt: float = INF):
+        """The RAPTOR rounds: per round, arrival by vehicle (ride) and when a vehicle can be boarded
+        (ready), with their parents. Nothing arriving at tgt or later is kept; reaching an egress
+        stop lowers tgt."""
         N = len(self.stop_ids)
         ride = [[INF] * N]
         rpar: list[list] = [[None] * N]
@@ -253,7 +273,6 @@ class Planner:
         for (p, j), d in delays.items():
             pdls.setdefault(p, {})[j] = d
         marked = set(src)
-        tgt = INF
         station = self.stop_station
         for k in range(1, MAX_RIDES + 1):
             if not marked:
@@ -316,20 +335,7 @@ class Planner:
                             tgt = c + egress[nb]
             ready.append(ready_k)
             qpar.append(qp)
-
-        # Best arrival per round, by vehicle or by a transfer walk, then the egress walk.
-        found = []
-        for k in range(1, len(ride)):
-            best = None
-            for s, eg in sorted(egress.items()):
-                if ride[k][s] + eg < (best[0] if best else INF):
-                    best = (ride[k][s] + eg, s, "ride")
-                q = qpar[k][s]
-                if q is not None and q[0] == "walk" and ready[k][s] + eg < (best[0] if best else INF):
-                    best = (ready[k][s] + eg, s, "ready")
-            if best:
-                found.append(self._path(best[1], k, best[2], rpar, qpar))
-        return found
+        return ride, rpar, ready, qpar
 
     def _path(self, s: int, k: int, kind: str, rpar, qpar) -> list[tuple]:
         """Steps from origin to stop s: ("access", via, s, w) | ("ride", p, j, b, a, d) | ("walk", a, b, w)."""
@@ -737,14 +743,9 @@ class Planner:
                 dl[(p, j)] = int(d)
         return dl
 
-    def _rides(self, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
-               depart: datetime, delays: dict[str, int] | None, max_results: int) -> tuple[list[dict], str | None]:
-        """Transit options (with "depart_t" and "arrive_t" timestamps), and the reason when none."""
-        local = depart.astimezone(TZ)
-        day = self._day(local.date())
-        t0 = int(math.floor((depart.astimezone(UTC) - day.base).total_seconds()))
-
-        # Access: a station's platforms at once (and stops a transfer walk away), or a walk.
+    def _access(self, o_pt: dict, o_plats: list[int] | None, t0: int) -> tuple[dict, dict[int, float]]:
+        """The search's start: a station's platforms at once (and stops a transfer walk away), or a
+        walk from a point. Stop → (time, parent), and the walk's crow-fly metres per stop."""
         access_m: dict[int, float] = {}
         src: dict[int, tuple[float, tuple]] = {}
         if o_plats is not None:
@@ -758,6 +759,37 @@ class Planner:
             for s, (w, dist) in self._near(o_pt["lon"], o_pt["lat"]).items():
                 src[s] = (t0 + w, ("access", None, w))
                 access_m[s] = dist
+        return src, access_m
+
+    def reach(self, origin: dict, depart: datetime, limit_s: int, delays: dict[str, int] | None = None) -> dict:
+        """Everywhere the network gets to within limit_s of leaving origin at depart (one search to
+        all stops): the origin as a point, and per stop reached [lon, lat, seconds after depart] of
+        its earliest arrival, by vehicle or on foot. Walking on from the stops is the caller's, at
+        walk_seconds pace."""
+        if depart.tzinfo is None:
+            depart = depart.replace(tzinfo=TZ)
+        day = self._day(depart.astimezone(TZ).date())
+        t0 = int(math.floor((depart.astimezone(UTC) - day.base).total_seconds()))
+        o_pt, o_plats = self._place(origin)
+        src, _ = self._access(o_pt, o_plats, t0)
+        dl = self._instance_delays(day, t0, delays)
+        ride, _, ready, _ = self._rounds(day, src, {}, dl, min([0, *dl.values()]), tgt=t0 + limit_s)
+        stops = []
+        for s, (a, r) in enumerate(zip(ride[-1], ready[-1])):
+            t = min(a, r)
+            if t < t0 + limit_s:
+                lon, lat = self.stop_ll[s]
+                stops.append([round(lon, 5), round(lat, 5), int(t - t0)])
+        return {"origin": o_pt, "stops": stops}
+
+    def _rides(self, o_pt: dict, o_plats: list[int] | None, d_pt: dict, d_plats: list[int] | None,
+               depart: datetime, delays: dict[str, int] | None, max_results: int) -> tuple[list[dict], str | None]:
+        """Transit options (with "depart_t" and "arrive_t" timestamps), and the reason when none."""
+        local = depart.astimezone(TZ)
+        day = self._day(local.date())
+        t0 = int(math.floor((depart.astimezone(UTC) - day.base).total_seconds()))
+
+        src, access_m = self._access(o_pt, o_plats, t0)
         egress_m: dict[int, float] = {}
         if d_plats is not None:
             egress = {s: 0 for s in d_plats}

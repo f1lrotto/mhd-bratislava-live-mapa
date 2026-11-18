@@ -32,7 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from . import derive, heartbeat, idsbk, lineview, nightly
 from .history import History
 from .logger import PollLogger
-from .planner import MAX_RIDES, Planner
+from .planner import DETOUR, MAX_RIDES, WALK_ONLY_M, WALK_SPEED, Planner
 from .poller import Poller
 from .static import TZ, Static
 from .stopevents import StopEventTracker
@@ -259,6 +259,31 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
                     k = nexts.get(leg["trip"]) if leg["vehicle"] else None
                     leg["approach"] = None if k is None else p.approach(leg["trip"], leg["from"]["stop"], k)
         return JSONResponse({"options": options, "reason": reason, "live": live}, headers=no_store)
+
+    @app.get("/api/reach")
+    def reach(origin: str = Query(alias="from"), at: str | None = None, limit: int = Query(30, alias="min", ge=5, le=60)):
+        """Where public transport and walking get to within `min` minutes: the stops reached with
+        their arrival times; the client walks on from them at the pace in "walk"."""
+        p = current_planner()
+        if p is None:
+            return JSONResponse({"error": "static data not built"}, status_code=503)
+        now = datetime.now(timezone.utc)
+        try:
+            depart = datetime.fromisoformat(at) if at else now
+            if depart.tzinfo is None:  # a wall-clock time in Bratislava
+                depart = depart.replace(tzinfo=TZ)
+            o = _place(origin, None)
+        except ValueError:
+            return JSONResponse({"error": "bad from or at"}, status_code=400)
+        live = timedelta(minutes=-30) < depart - now < timedelta(hours=2)
+        delays = state["derived"].realtime.trip_delays() if live else None
+        try:
+            res = p.reach(o, depart, limit * 60, delays=delays)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=404)
+        body = {**res, "depart": depart.astimezone(TZ).isoformat(timespec="seconds"), "limit": limit * 60,
+                "live": live, "walk": {"speed": WALK_SPEED, "detour": DETOUR, "maxM": WALK_ONLY_M}}
+        return JSONResponse(body, headers=no_store)
 
     @app.get("/api/line/{line}")
     def line(line: str):
