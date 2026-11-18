@@ -1,11 +1,13 @@
 <script lang="ts">
   import { drawnPlanOption } from '../lib/api'
-  import { compareLines, hm, plural } from '../lib/format'
-  import { duration, routeExtra, routeHops, SLOTS, slotTime, SPEED_COLORS, SPEED_LABELS, speedColor, timeSlot } from '../lib/speeds'
+  import { compareLines, hm } from '../lib/format'
+  import { count, t } from '../lib/i18n'
+  import { duration, routeExtra, routeHops, SLOTS, slotTime, SPEED_COLORS, speedColor, speedLabels, timeSlot } from '../lib/speeds'
   import { app, setSpeed } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
 
-  const KIND = { workday: 'pracovné dni', saturday: 'soboty', sunday: 'nedele a sviatky' } as const
+  const kindText = (k: 'workday' | 'saturday' | 'sunday') =>
+    ({ workday: t('pracovné dni', 'working days'), saturday: t('soboty', 'Saturdays'), sunday: t('nedele a sviatky', 'Sundays and holidays') })[k]
 
   const s = $derived(app.speed!)
   // The data on screen may still be another view's while this one loads.
@@ -40,24 +42,24 @@
   })
 </script>
 
-<section class="speed-card" aria-label="Rýchlosť jazdy">
+<section class="speed-card" aria-label={t('Rýchlosť jazdy', 'Running speed')}>
   <header>
-    <strong>Rýchlosť jazdy</strong>
-    <button class="close" onclick={() => setSpeed(null)} aria-label="Vypnúť rýchlosť jazdy">
+    <strong>{t('Rýchlosť jazdy', 'Running speed')}</strong>
+    <button class="close" onclick={() => setSpeed(null)} aria-label={t('Vypnúť rýchlosť jazdy', 'Turn off running speed')}>
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
         ><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></svg
       >
     </button>
   </header>
-  <div class="seg" role="group" aria-label="Obdobie">
-    <button aria-pressed={s.view === 'live'} onclick={() => setSpeed({ view: 'live' })}>Naživo</button>
+  <div class="seg" role="group" aria-label={t('Obdobie', 'Period')}>
+    <button aria-pressed={s.view === 'live'} onclick={() => setSpeed({ view: 'live' })}>{t('Naživo', 'Live')}</button>
     <button aria-pressed={s.view === 'typical'} onclick={() => s.view !== 'typical' && setSpeed({ view: 'typical', at: null })}
-      >Bežne</button
+      >{t('Bežne', 'Typical')}</button
     >
   </div>
   {#if s.view === 'typical'}
     <label class="time">
-      <span>o {slotTime(slot)}{slot === nowSlot ? ' (teraz)' : ''}</span>
+      <span>{t('o', 'at')} {slotTime(slot)}{slot === nowSlot ? t(' (teraz)', ' (now)') : ''}</span>
       <input
         type="range"
         min="0"
@@ -65,7 +67,7 @@
         value={slot}
         oninput={(e) => (dragging = +e.currentTarget.value)}
         onchange={(e) => pickSlot(+e.currentTarget.value)}
-        aria-label="Čas dňa"
+        aria-label={t('Čas dňa', 'Time of day')}
         aria-valuetext={slotTime(slot)}
       />
     </label>
@@ -73,39 +75,51 @@
 
   <div class="scale" aria-hidden="true">
     {#each SPEED_COLORS as c, i (c)}
-      <span><i style:background={c}></i>{SPEED_LABELS[i]}</span>
+      <span><i style:background={c}></i>{speedLabels()[i]}</span>
     {/each}
   </div>
   <p class="note">
     {#if app.speedError && !data}
-      Nepodarilo sa načítať ({app.speedError}).
+      {t(`Nepodarilo sa načítať (${app.speedError}).`, `Couldn't load (${app.speedError}).`)}
     {:else if !data}
-      Načítavam…
+      {t('Načítavam…', 'Loading…')}
     {:else if data.view === 'live'}
       {#if data.hops.length}
-        Čas jazdy medzi zastávkami za posledných {data.windowS / 60} min oproti cestovnému poriadku.
+        {t(
+          `Čas jazdy medzi zastávkami za posledných ${data.windowS / 60} min oproti cestovnému poriadku.`,
+          `Running time between stops over the last ${data.windowS / 60} min compared with the timetable.`,
+        )}
       {:else}
-        Za posledných {data.windowS / 60} min sme zatiaľ nezmerali žiadnu jazdu.
+        {t(`Za posledných ${data.windowS / 60} min sme zatiaľ nezmerali žiadnu jazdu.`, `No runs measured in the last ${data.windowS / 60} min yet.`)}
       {/if}
     {:else if !data.days}
-      Na porovnanie zatiaľ nemáme dosť dní histórie.
+      {t('Na porovnanie zatiaľ nemáme dosť dní histórie.', "We don't have enough days of history to compare yet.")}
     {:else}
-      Bežný čas jazdy: {KIND[data.kind]} {data.from}–{data.to}, priemer z {plural(data.days, 'dňa', 'dní', 'dní')}.
+      {t('Bežný čas jazdy', 'Typical running time')}: {kindText(data.kind)} {data.from}–{data.to}, {t('priemer z', 'average of')}
+      {count(data.days, ['dňa', 'dní', 'dní'], ['day', 'days'])}.
     {/if}
   </p>
 
   {#if routeOpt}
     <div class="route" role="status">
       {#if !route}
-        <span class="muted">Vaša trasa…</span>
+        <span class="muted">{t('Vaša trasa…', 'Your route…')}</span>
       {:else if !route.measured}
-        <span class="muted">Na vašej trase zatiaľ nemáme namerané jazdy.</span>
+        <span class="muted">{t('Na vašej trase zatiaľ nemáme namerané jazdy.', 'No runs measured on your route yet.')}</span>
       {:else}
         <span class="dot" style:background={speedColor(route.ratio)}></span>
         <span>
-          Vaša trasa {data?.view === 'live' ? 'teraz' : 'zvyčajne'}
-          <b>{extraMin > 0 ? `o ${extraMin} min pomalšie` : extraMin < 0 ? `o ${-extraMin} min rýchlejšie` : 'podľa cestovného poriadku'}</b>
-          <span class="muted small">· údaje z {route.measured} z {route.total} úsekov</span>
+          {data?.view === 'live' ? t('Vaša trasa teraz', 'Your route now') : t('Vaša trasa zvyčajne', 'Your route usually')}
+          <b
+            >{extraMin > 0
+              ? t(`o ${extraMin} min pomalšie`, `${extraMin} min slower`)
+              : extraMin < 0
+                ? t(`o ${-extraMin} min rýchlejšie`, `${-extraMin} min faster`)
+                : t('podľa cestovného poriadku', 'as timetabled')}</b
+          >
+          <span class="muted small"
+            >· {t(`údaje z ${route.measured} z ${route.total} úsekov`, `data from ${route.measured} of ${route.total} sections`)}</span
+          >
         </span>
       {/if}
     </div>
@@ -115,7 +129,7 @@
     <div class="hop">
       <div class="hop-head">
         <span class="hop-name">{hop.from} → {hop.to}</span>
-        <button class="close sm" onclick={() => (app.speedHop = null)} aria-label="Zrušiť výber úseku">
+        <button class="close sm" onclick={() => (app.speedHop = null)} aria-label={t('Zrušiť výber úseku', 'Deselect the section')}>
           <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"
             ><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" /></svg
           >
@@ -130,16 +144,18 @@
         <p class="hop-time">
           <span class="dot" style:background={speedColor(hop.run.r)}></span>
           <span
-            ><b>{duration(hop.run.a)}</b> namiesto {duration(hop.run.s)}
-            <span class="muted">· {plural(hop.run.n, 'jazda', 'jazdy', 'jázd')}</span></span
+            ><b>{duration(hop.run.a)}</b> {t('namiesto', 'instead of')} {duration(hop.run.s)}
+            <span class="muted">· {count(hop.run.n, ['jazda', 'jazdy', 'jázd'], ['run', 'runs'])}</span></span
           >
         </p>
       {:else if data}
-        <p class="muted small">{data.view === 'live' ? 'Za poslednú polhodinu tadiaľ nič neprešlo.' : 'V tomto čase tu nemáme dosť jázd.'}</p>
+        <p class="muted small">{data.view === 'live'
+            ? t('Za poslednú polhodinu tadiaľ nič neprešlo.', 'Nothing has run here in the last half hour.')
+            : t('V tomto čase tu nemáme dosť jázd.', "We don't have enough runs here at this time.")}</p>
       {/if}
     </div>
   {:else if data?.hops.length && !routeOpt}
-    <p class="muted small">Ťuknite na úsek pre podrobnosti.</p>
+    <p class="muted small">{t('Ťuknite na úsek pre podrobnosti.', 'Tap a section for details.')}</p>
   {/if}
 </section>
 

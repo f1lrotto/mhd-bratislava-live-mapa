@@ -1,3 +1,5 @@
+import { prefs } from './prefs.svelte'
+import { t } from './i18n'
 import type { VehicleType } from './types'
 
 // Delay bands: 0 on time (under 2 min), 1 = 2–5 min, 2 = 5–10 min, 3 = 10+ min, null = no data.
@@ -10,7 +12,7 @@ export function bandColor(band: number | null | undefined): string {
   return band == null ? NO_DATA_COLOR : BAND_COLORS[band]
 }
 
-export const BAND_LABELS = ['načas', '2–5 min', '5–10 min', '10+ min', 'bez údajov']
+export const bandLabels = () => [t('načas', 'on time'), '2–5 min', '5–10 min', '10+ min', t('bez údajov', 'no data')]
 
 export function delayBand(delay: number | null): number | null {
   if (delay == null) return null
@@ -22,9 +24,9 @@ export function delayBand(delay: number | null): number | null {
 
 /** regional: an IDS BK delay, which has no 15-minute cap. */
 export function delayText(delay: number | null, capped = false, regional = false): string {
-  if (delay == null) return 'bez údajov'
+  if (delay == null) return t('bez údajov', 'no data')
   if (capped || (!regional && delay >= 900)) return '15+ min'
-  if (delay < 60) return 'načas'
+  if (delay < 60) return t('načas', 'on time')
   return `${Math.floor(delay / 60)} min`
 }
 
@@ -35,23 +37,21 @@ export function minutes(s: number | null | undefined): string {
 
 export function agoText(s: number | null | undefined): string {
   if (s == null) return '–'
-  if (s < 60) return `pred ${Math.max(0, Math.round(s))} s`
-  if (s < 3600) return `pred ${Math.floor(s / 60)} min`
-  return `pred ${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
+  const d = s < 60 ? `${Math.max(0, Math.round(s))} s` : s < 3600 ? `${Math.floor(s / 60)} min` : `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
+  return t(`pred ${d}`, `${d} ago`)
 }
 
-export const TYPE_LABELS: Record<VehicleType, string> = {
-  tram: 'električka',
-  trolleybus: 'trolejbus',
-  bus: 'autobus',
-  other: 'vozidlo',
+/** "12 %" in Slovak, "12%" in English. */
+export function percent(share: number | null | undefined): string {
+  return share == null ? '–' : `${Math.round(share * 100)}${t(' %', '%')}`
 }
 
-export const TYPE_PLURAL: Record<VehicleType, string> = {
-  tram: 'Električky',
-  trolleybus: 'Trolejbusy',
-  bus: 'Autobusy',
-  other: 'Ostatné',
+export function typeLabel(type: VehicleType): string {
+  return { tram: t('električka', 'tram'), trolleybus: t('trolejbus', 'trolleybus'), bus: t('autobus', 'bus'), other: t('vozidlo', 'vehicle') }[type]
+}
+
+export function typePlural(type: VehicleType): string {
+  return { tram: t('Električky', 'Trams'), trolleybus: t('Trolejbusy', 'Trolleybuses'), bus: t('Autobusy', 'Buses'), other: t('Ostatné', 'Other') }[type]
 }
 
 /** IDS BK's vehicle keys, stop ids and station codes; DPB's are fleet numbers and DPB's ids. */
@@ -61,15 +61,8 @@ export function isRegional(id: string): boolean {
 
 /** How a vehicle is called: DPB's fleet number, or a regional bus's trip number (it has no fleet number). */
 export function vehicleName(key: string, tripNo: number | null | undefined): string {
-  if (!isRegional(key)) return `č. ${key}`
-  return tripNo != null ? `spoj č. ${tripNo}` : 'regionálny spoj'
-}
-
-/** Slovak plural for counts: 1 vozidlo, 2–4 vozidlá, 5+ vozidiel. */
-export function plural(n: number, one: string, few: string, many: string): string {
-  if (n === 1) return `${n} ${one}`
-  if (n >= 2 && n <= 4) return `${n} ${few}`
-  return `${n} ${many}`
+  if (!isRegional(key)) return t(`č. ${key}`, `no. ${key}`)
+  return tripNo != null ? t(`spoj č. ${tripNo}`, `trip no. ${tripNo}`) : t('regionálny spoj', 'regional bus')
 }
 
 export function isNight(line: string): boolean {
@@ -92,17 +85,20 @@ export function compareLines(a: string, b: string): number {
 
 export const TZ = 'Europe/Bratislava'
 const HM = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false })
-const DAY = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'numeric' })
+const DAY = {
+  sk: new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'numeric' }),
+  en: new Intl.DateTimeFormat('en-GB', { timeZone: TZ, weekday: 'short', day: 'numeric', month: 'numeric' }),
+}
 
-/** "08:02" in Bratislava time. */
+/** "08:02" in Bratislava time, 24-hour in both languages. */
 export function hm(iso: string | null | undefined): string {
   if (!iso) return '–'
   return HM.format(new Date(iso))
 }
 
-/** "ut 17. 11." in Bratislava time. */
+/** "ut 17. 11." / "Tue 17/11" in Bratislava time. */
 export function dayText(iso: string): string {
-  return DAY.format(new Date(iso))
+  return DAY[prefs.lang].format(new Date(iso))
 }
 
 /** Bratislava's UTC offset in minutes at a given instant. */

@@ -131,7 +131,8 @@ export interface VehicleDetail {
 }
 
 export interface PlanPlace {
-  name: string
+  /** Null for a map point or the user's location: placeLabel names it. */
+  name: string | null
   lat: number
   lon: number
   stop: string | null

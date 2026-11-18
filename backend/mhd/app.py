@@ -216,11 +216,12 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
     def current_planner() -> Planner | None:
         return state["planner"] if current_static() is not None else None
 
-    def _place(value: str, name: str | None) -> dict:
-        """\"93\" is a station code, \"48.15,17.11\" a map point or the user's location."""
+    def _place(value: str) -> dict:
+        """\"93\" is a station code, \"48.15,17.11\" a map point or the user's location. A point has
+        no name: the client labels it in its own language."""
         if "," in value:
             lat, lon = (float(x) for x in value.split(",", 1))
-            return {"lat": lat, "lon": lon, "name": name or "Zvolené miesto"}
+            return {"lat": lat, "lon": lon}
         return {"station": value}
 
     @app.get("/api/plan")
@@ -228,8 +229,6 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
         origin: str = Query(alias="from"),
         dest: str = Query(alias="to"),
         at: str | None = None,
-        fromName: str | None = None,
-        toName: str | None = None,
         track: str | None = None,
     ):
         """track: the open option's rides as "trip~from stop~to stop" joined by commas. While
@@ -242,7 +241,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             depart = datetime.fromisoformat(at) if at else now
             if depart.tzinfo is None:  # a wall-clock time in Bratislava
                 depart = depart.replace(tzinfo=TZ)
-            o, d = _place(origin, fromName), _place(dest, toName)
+            o, d = _place(origin), _place(dest)
         except ValueError:
             return JSONResponse({"error": "bad from, to or at"}, status_code=400)
         rt = state["derived"].realtime
@@ -289,7 +288,7 @@ def create_app(poller: Poller | None = None, start_polling: bool | None = None) 
             depart = datetime.fromisoformat(at) if at else now
             if depart.tzinfo is None:  # a wall-clock time in Bratislava
                 depart = depart.replace(tzinfo=TZ)
-            o = _place(origin, None)
+            o = _place(origin)
         except ValueError:
             return JSONResponse({"error": "bad from or at"}, status_code=400)
         live = timedelta(minutes=-30) < depart - now < timedelta(hours=2)

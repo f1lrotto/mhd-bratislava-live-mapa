@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
   import { toLocalInput } from '../lib/format'
+  import { t } from '../lib/i18n'
 
   /** A Bratislava time set with hour and minute arrows (held, they repeat) and quick shifts. A change
    * reaches `onchange` once stepping pauses, so a held arrow doesn't refetch on every step. */
@@ -87,17 +88,17 @@
   </button>
 {/snippet}
 
-<div class="stepper" role="group" aria-label="Čas {hm}">
+<div class="stepper" role="group" aria-label={t(`Čas ${hm}`, `Time ${hm}`)}>
   <div class="col">
-    {@render arrow(60, 'O hodinu neskôr', 'M6 15l6-6 6 6')}
+    {@render arrow(60, t('O hodinu neskôr', 'An hour later'), 'M6 15l6-6 6 6')}
     <span class="big">{hm.slice(0, 2)}</span>
-    {@render arrow(-60, 'O hodinu skôr', 'M6 9l6 6 6-6')}
+    {@render arrow(-60, t('O hodinu skôr', 'An hour earlier'), 'M6 9l6 6 6-6')}
   </div>
   <span class="big">:</span>
   <div class="col">
-    {@render arrow(1, 'O minútu neskôr', 'M6 15l6-6 6 6')}
+    {@render arrow(1, t('O minútu neskôr', 'A minute later'), 'M6 15l6-6 6 6')}
     <span class="big">{hm.slice(3, 5)}</span>
-    {@render arrow(-1, 'O minútu skôr', 'M6 9l6 6 6-6')}
+    {@render arrow(-1, t('O minútu skôr', 'A minute earlier'), 'M6 9l6 6 6-6')}
   </div>
 </div>
 <div class="quick">
@@ -105,7 +106,7 @@
     <button disabled={!can(d)} onclick={() => step(d)}>{label}</button>
   {/each}
 </div>
-<p class="hint">Podržte šípku pre rýchly posun</p>
+<p class="hint">{t('Podržte šípku pre rýchly posun', 'Hold an arrow to move quickly')}</p>
 
 <style>
   .stepper {

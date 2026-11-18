@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../lib/i18n'
   import { isFavorite, setFavorite, type Favorite, type FavoriteKind } from '../lib/profile.svelte'
 
   let { kind, ref, names = null, label }: { kind: FavoriteKind; ref: string; names?: Favorite['names']; label: string } =
@@ -12,8 +13,8 @@
   class:on
   onclick={() => setFavorite(kind, ref, !on, names)}
   aria-pressed={on}
-  aria-label="Obľúbené: {label}"
-  title={on ? 'Odobrať z obľúbených' : 'Pridať do obľúbených'}
+  aria-label="{t('Obľúbené', 'Favourite')}: {label}"
+  title={on ? t('Odobrať z obľúbených', 'Remove from favourites') : t('Pridať do obľúbených', 'Add to favourites')}
 >
   <svg viewBox="0 0 24 24" aria-hidden="true"
     ><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" /></svg

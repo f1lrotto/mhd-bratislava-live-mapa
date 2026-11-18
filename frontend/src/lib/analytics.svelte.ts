@@ -50,7 +50,7 @@ export function startAnalytics(): void {
       capture_dead_clicks: false,
       before_send: (event) => {
         if (!event) return event
-        // Query strings can hold a planned trip's coordinates ("Moja poloha"): never send them.
+        // Query strings can hold a planned trip's coordinates (the user's location): never send them.
         for (const props of [event.properties, event.$set, event.$set_once]) {
           for (const k in props) {
             const v = props[k]

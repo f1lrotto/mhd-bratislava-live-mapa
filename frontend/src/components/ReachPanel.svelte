@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { poll, reachQuery, refreshReach } from '../lib/api'
   import { hm } from '../lib/format'
+  import { t } from '../lib/i18n'
   import { markHere, placeLabel, pointValue, setPlanEnd } from '../lib/places'
   import { REACH_COLORS, REACH_LIMITS, reachBands, reachShapes } from '../lib/reach'
   import { app, navigate, SLOW_POLL_MS } from '../lib/state.svelte'
@@ -46,18 +47,21 @@
   function locate() {
     geoError = null
     if (!navigator.geolocation) {
-      geoError = 'Tento prehliadač polohu nepodporuje.'
+      geoError = t('Tento prehliadač polohu nepodporuje.', "This browser doesn't support location.")
       return
     }
     geoBusy = true
     navigator.geolocation.getCurrentPosition(
       (p) => {
         geoBusy = false
-        setPlanEnd('from', markHere(pointValue(p.coords.latitude, p.coords.longitude)), 'Moja poloha')
+        setPlanEnd('from', markHere(pointValue(p.coords.latitude, p.coords.longitude)))
       },
       (e) => {
         geoBusy = false
-        geoError = e.code === e.PERMISSION_DENIED ? 'Prístup k polohe je zakázaný.' : 'Polohu sa nepodarilo zistiť.'
+        geoError =
+          e.code === e.PERMISSION_DENIED
+            ? t('Prístup k polohe je zakázaný.', 'Location access is blocked.')
+            : t('Polohu sa nepodarilo zistiť.', "Couldn't find your location.")
       },
       { enableHighAccuracy: true, timeout: 10_000, maximumAge: 60_000 },
     )
@@ -66,52 +70,66 @@
   let pickerOpen = $state(false)
 
   const errorText = (e: string) =>
-    /unknown station/.test(e) ? 'Zastávku sme nenašli. Vyberte ju znova.' : `Dostupnosť sa nepodarilo vypočítať (${e}).`
-  const areaText = (km2: number) => (km2 < 10 ? km2.toFixed(1).replace('.', ',') : String(Math.round(km2)))
+    /unknown station/.test(e)
+      ? t('Zastávku sme nenašli. Vyberte ju znova.', "We couldn't find the stop. Choose it again.")
+      : t(`Dostupnosť sa nepodarilo vypočítať (${e}).`, `Couldn't work out where you can get to (${e}).`)
+  const areaText = (km2: number) => (km2 < 10 ? t(km2.toFixed(1).replace('.', ','), km2.toFixed(1)) : String(Math.round(km2)))
 </script>
 
-<Panel tall label="Dostupnosť" expand={pickerOpen}>
+<Panel tall label={t('Dostupnosť', 'Reach')} expand={pickerOpen}>
   {#snippet header()}
     <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
-    <strong>Kam sa dostanem</strong>
+    <strong>{t('Kam sa dostanem', 'Where can I get to')}</strong>
   {/snippet}
 
-  <PlaceInput end="from" label="Odkiaľ" value={from} bind:input={fromInput} onpick={(c) => set({ from: c })} onlocate={locate} onmap={() => (app.pick = app.pick === 'from' ? null : 'from')} />
-  {#if geoBusy}<p class="note">Zisťujem polohu…</p>{/if}
+  <PlaceInput end="from" label={t('Odkiaľ', 'From')} value={from} bind:input={fromInput} onpick={(c) => set({ from: c })} onlocate={locate} onmap={() => (app.pick = app.pick === 'from' ? null : 'from')} />
+  {#if geoBusy}<p class="note">{t('Zisťujem polohu…', 'Finding your location…')}</p>{/if}
   {#if geoError}<p class="note error">{geoError}</p>{/if}
 
   <div class="when">
     <DepartPicker {at} {now} bind:open={pickerOpen} onchange={(v) => set({ at: v })} />
   </div>
 
-  <div class="chips-row" role="group" aria-label="Najviac">
-    <span class="muted small">najviac</span>
+  <div class="chips-row" role="group" aria-label={t('Najviac', 'At most')}>
+    <span class="muted small">{t('najviac', 'at most')}</span>
     {#each REACH_LIMITS as m (m)}
       <button class:active={min === m} aria-pressed={min === m} onclick={() => set({ min: m })}>{m} min</button>
     {/each}
   </div>
 
   {#if !from}
-    <p class="note">Zadajte zastávku, svoju polohu alebo ťuknite na mapu. Ukážeme, kam sa odtiaľ dostanete MHD a pešo.</p>
+    <p class="note">
+      {t(
+        'Zadajte zastávku, svoju polohu alebo ťuknite na mapu. Ukážeme, kam sa odtiaľ dostanete MHD a pešo.',
+        "Enter a stop or your location, or tap the map. We'll show where you can get to from there by public transport and on foot.",
+      )}
+    </p>
   {:else if !reach || (reach.loading && !reach.data)}
     <div class="skeleton" aria-busy="true"><div></div></div>
   {:else if reach.error && !reach.data}
     <p class="note error">{errorText(reach.error)}</p>
   {:else if reach.data && areas}
-    <ul class="legend" aria-label="Kam sa dostanete">
+    <ul class="legend" aria-label={t('Kam sa dostanete', 'Where you can get to')}>
       {#each bands as b, i (b)}
         <li>
           <span class="swatch" style:--c={REACH_COLORS[i]} aria-hidden="true"></span>
-          <span><strong>do {b} min</strong> <span class="muted">· {areaText(areas[i])} km²</span></span>
+          <span><strong>{t(`do ${b} min`, `within ${b} min`)}</strong> <span class="muted">· {areaText(areas[i])} km²</span></span>
         </li>
       {/each}
     </ul>
     <p class="note">
-      Z miesta {placeLabel(from)} {at ? `o ${hm(at)}` : 'teraz'}{reach.data.live ? ', s aktuálnym meškaním' : ''}: pešo
-      k zastávke, MHD s prestupmi a pešo k cieľu (najviac 2 km vzdušnou čiarou).
+      {t(
+        `Z miesta ${placeLabel(from)} ${at ? `o ${hm(at)}` : 'teraz'}${reach.data.live ? ', s aktuálnym meškaním' : ''}: pešo k zastávke, MHD s prestupmi a pešo k cieľu (najviac 2 km vzdušnou čiarou).`,
+        `From ${placeLabel(from)} ${at ? `at ${hm(at)}` : 'now'}${reach.data.live ? ', with current delays' : ''}: walk to a stop, public transport with changes, and walk to the destination (at most 2 km as the crow flies).`,
+      )}
     </p>
-    <p class="note">Ťuknite na zvýraznenú zastávku a ukážeme vám spojenie k nej. Inde na mape začnete odtiaľ.</p>
-    {#if reach.error}<p class="note error">Obnovenie zlyhalo, ukazujeme posledný výsledok.</p>{/if}
+    <p class="note">
+      {t(
+        'Ťuknite na zvýraznenú zastávku a ukážeme vám spojenie k nej. Inde na mape začnete odtiaľ.',
+        "Tap a highlighted stop and we'll show you a connection to it. Tap anywhere else on the map to start from there.",
+      )}
+    </p>
+    {#if reach.error}<p class="note error">{t('Obnovenie zlyhalo, ukazujeme posledný výsledok.', 'Refreshing failed; showing the last result.')}</p>{/if}
   {/if}
 </Panel>
 

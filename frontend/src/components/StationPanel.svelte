@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getJson, poll } from '../lib/api'
-  import { hm, minsUntil, plural } from '../lib/format'
+  import { hm, minsUntil } from '../lib/format'
+  import { count, locale, t } from '../lib/i18n'
   import { app, navigate } from '../lib/state.svelte'
   import type { Departure, StationBoard } from '../lib/types'
   import FavButton from './FavButton.svelte'
@@ -42,18 +43,18 @@
   })
 
   const platforms = $derived(
-    (board?.platforms.filter((p) => p.platform) ?? []).toSorted((a, b) => a.platform!.localeCompare(b.platform!, 'sk')),
+    (board?.platforms.filter((p) => p.platform) ?? []).toSorted((a, b) => a.platform!.localeCompare(b.platform!, locale())),
   )
   const deps = $derived(board ? board.departures.filter((d) => !stop || d.stopId === stop) : [])
   const shown = $derived(more ? deps : deps.slice(0, 20))
   const now = $derived(app.tick + app.skewMs)
-  const name = $derived(board?.name ?? station?.name ?? 'Zastávka')
+  const name = $derived(board?.name ?? station?.name ?? t('Zastávka', 'Stop'))
   const lines = $derived(board?.lines ?? station?.lines ?? [])
 
   function when(d: Departure): string {
     const m = minsUntil(d.predicted ?? d.scheduled, now)
-    if (m < 1) return 'teraz'
-    if (m < 60) return `o ${m} min`
+    if (m < 1) return t('teraz', 'now')
+    if (m < 60) return t(`o ${m} min`, `in ${m} min`)
     return hm(d.predicted ?? d.scheduled)
   }
 
@@ -67,13 +68,13 @@
   }
 </script>
 
-<Panel tall label="Zastávka {name}">
+<Panel tall label={t(`Zastávka ${name}`, `Stop ${name}`)}>
   {#snippet header()}
     <span class="pin" aria-hidden="true"></span>
     <div class="head-text">
       <strong>{name}</strong>
       <span class="muted small">
-        {#if platforms.length > 1}{plural(platforms.length, 'nástupište', 'nástupištia', 'nástupíšť')}{:else}Zastávka{/if}
+        {#if platforms.length > 1}{count(platforms.length, ['nástupište', 'nástupištia', 'nástupíšť'], ['platform', 'platforms'])}{:else}{t('Zastávka', 'Stop')}{/if}
       </span>
     </div>
     {#if station}<FavButton kind="station" ref={code} label={name} />{/if}
@@ -81,33 +82,33 @@
 
   {#if !station && !board && !error}
     {#if Object.keys(app.stations).length}
-      <p class="note">Zastávku sme nenašli.</p>
+      <p class="note">{t('Zastávku sme nenašli.', "We couldn't find this stop.")}</p>
     {:else}
-      <p class="note">Načítavam…</p>
+      <p class="note">{t('Načítavam…', 'Loading…')}</p>
     {/if}
   {:else}
     <div class="actions">
       <button class="secondary" onclick={() => plan('from')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" /></svg>
-        Trasa odtiaľto
+        {t('Trasa odtiaľto', 'Trip from here')}
       </button>
       <button class="secondary" onclick={() => plan('to')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z" /><circle cx="12" cy="10" r="2" /></svg>
-        Trasa sem
+        {t('Trasa sem', 'Trip to here')}
       </button>
     </div>
 
-    <h3 class="section">Odchody</h3>
+    <h3 class="section">{t('Odchody', 'Departures')}</h3>
     {#if platforms.length > 1}
-      <div class="plat" role="group" aria-label="Nástupište">
-        <button class:active={!stop} aria-pressed={!stop} onclick={() => pickPlatform(null)}>Všetky</button>
+      <div class="plat" role="group" aria-label={t('Nástupište', 'Platform')}>
+        <button class:active={!stop} aria-pressed={!stop} onclick={() => pickPlatform(null)}>{t('Všetky', 'All')}</button>
         {#each platforms as p (p.stopId)}
           <button
             class:active={stop === p.stopId}
             aria-pressed={stop === p.stopId}
             onclick={() => pickPlatform(p.stopId)}
-            title="Linky {p.lines.join(', ')}"
-            aria-label="Nástupište {p.platform}, linky {p.lines.join(', ')}"
+            title={t('Linky', 'Lines') + ' ' + p.lines.join(', ')}
+            aria-label={t(`Nástupište ${p.platform}, linky ${p.lines.join(', ')}`, `Platform ${p.platform}, lines ${p.lines.join(', ')}`)}
           >
             {p.platform}
           </button>
@@ -116,11 +117,11 @@
     {/if}
 
     {#if error && !board}
-      <p class="note error">Odchody sa nepodarilo načítať ({error}).</p>
+      <p class="note error">{t(`Odchody sa nepodarilo načítať (${error}).`, `Couldn't load the departures (${error}).`)}</p>
     {:else if !board}
       <div class="skeleton" aria-busy="true"><div></div><div></div><div></div></div>
     {:else if !deps.length}
-      <p class="empty">V najbližších 90 minútach odtiaľto nič nejde.</p>
+      <p class="empty">{t('V najbližších 90 minútach odtiaľto nič nejde.', 'Nothing leaves from here in the next 90 minutes.')}</p>
     {:else}
       <ul class="board">
         {#each shown as d (d.trip + d.stopId + d.scheduled)}
@@ -131,21 +132,23 @@
               class="dep"
               class:tap={d.vehicle}
               role={d.vehicle ? undefined : 'group'}
-              aria-label={d.vehicle ? `Linka ${d.line} smer ${d.headsign}, ${when(d)}, otvoriť vozidlo` : undefined}
+              aria-label={d.vehicle
+                ? t(`Linka ${d.line} smer ${d.headsign}, ${when(d)}, otvoriť vozidlo`, `Line ${d.line} to ${d.headsign}, ${when(d)}, open vehicle`)
+                : undefined}
               onclick={d.vehicle ? () => navigate({ kind: 'vehicle', key: d.vehicle! }) : undefined}
             >
               <LineBadge line={d.line} />
               <span class="dep-main">
                 <span class="headsign">{d.headsign}</span>
                 <span class="muted small">
-                  {#if d.platform}nástupište {d.platform}{/if}
-                  {#if d.uncertain}<span class="late">· 15+ min meškanie</span>{/if}
+                  {#if d.platform}{t('nástupište', 'platform')} {d.platform}{/if}
+                  {#if d.uncertain}<span class="late">· {t('15+ min meškanie', '15+ min late')}</span>{/if}
                 </span>
               </span>
               <span class="dep-time">
-                <span class="rel" class:now={when(d) === 'teraz'}>{when(d)}</span>
+                <span class="rel" class:now={minsUntil(d.predicted ?? d.scheduled, now) < 1}>{when(d)}</span>
                 <span class="abs small" class:hide={!d.live && !changed && when(d) === hm(d.scheduled)}>
-                  {#if d.live}<span class="live-dot" title="Podľa polohy vozidla" aria-label="naživo"></span>{/if}
+                  {#if d.live}<span class="live-dot" title={t('Podľa polohy vozidla', "From the vehicle's position")} aria-label={t('naživo', 'live')}></span>{/if}
                   {#if changed}
                     <span class:late={d.uncertain}>{hm(d.predicted)}</span>
                     <s class="muted">{hm(d.scheduled)}</s>
@@ -159,22 +162,22 @@
         {/each}
       </ul>
       {#if deps.length > shown.length}
-        <button class="secondary" onclick={() => (more = true)}>Ďalšie odchody ({deps.length - shown.length})</button>
+        <button class="secondary" onclick={() => (more = true)}>{t('Ďalšie odchody', 'More departures')} ({deps.length - shown.length})</button>
       {/if}
-      <p class="muted small legend"><span class="live-dot" aria-hidden="true"></span> čas podľa polohy vozidla, inak podľa cestovného poriadku</p>
+      <p class="muted small legend"><span class="live-dot" aria-hidden="true"></span> {t('čas podľa polohy vozidla, inak podľa cestovného poriadku', "time from the vehicle's position, otherwise from the timetable")}</p>
     {/if}
     {#if lines.length}
-      <h3 class="section">Linky</h3>
+      <h3 class="section">{t('Linky', 'Lines')}</h3>
       <div class="chips">
         {#each lines as line (line)}
-          <button class="chip-btn" onclick={() => navigate({ kind: 'line', line, dir: null })} aria-label="Linka {line}">
+          <button class="chip-btn" onclick={() => navigate({ kind: 'line', line, dir: null })} aria-label={t(`Linka ${line}`, `Line ${line}`)}>
             <LineBadge {line} size="sm" />
           </button>
         {/each}
       </div>
     {/if}
 
-    <a class="ubian small" href="https://www.ubian.sk/odchody" target="_blank" rel="noopener">Odchody v Ubiane ↗</a>
+    <a class="ubian small" href="https://www.ubian.sk/odchody" target="_blank" rel="noopener">{t('Odchody v Ubiane ↗', 'Departures in Ubian ↗')}</a>
   {/if}
 </Panel>
 

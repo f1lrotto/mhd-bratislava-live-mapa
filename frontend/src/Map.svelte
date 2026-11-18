@@ -5,6 +5,8 @@
   import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url'
   import { onMount, untrack } from 'svelte'
   import { drawnPlanOption, planQuery, reachQuery } from './lib/api'
+  import { t } from './lib/i18n'
+  import { prefs } from './lib/prefs.svelte'
   import { passes } from './lib/filter'
   import { addMarkerImages, addPinImages, arrowOffset } from './lib/markers'
   import { here, openNearby } from './lib/nearby.svelte'
@@ -27,6 +29,45 @@
 
   let el: HTMLDivElement
   let map: MlMap | undefined
+
+  /** MapLibre's UI strings that the map's controls show, in the visitor's language. */
+  function mapLocale(): Record<string, string> {
+    return {
+      'Map.Title': t('Mapa', 'Map'),
+      'NavigationControl.ZoomIn': t('Priblížiť', 'Zoom in'),
+      'NavigationControl.ZoomOut': t('Oddialiť', 'Zoom out'),
+      'AttributionControl.ToggleAttribution': t('Zdroje dát', 'Data sources'),
+      'AttributionControl.MapFeedback': t('Nahlásiť chybu mapy', 'Report a map error'),
+    }
+  }
+
+  let controls: maplibregl.IControl[] = []
+  /** Bumped when the controls are added again, so effects that style their buttons re-run. */
+  let controlsSeq = $state(0)
+  function addControls(m: MlMap): void {
+    speedButton.title = speedButton.ariaLabel = t('Rýchlosť jazdy', 'Travel speed')
+    newsButton.title = t('Čo je nové', "What's new")
+    const attribution = new maplibregl.AttributionControl({
+      compact: true,
+      customAttribution: [
+        t('Cestovný poriadok © DPB, Hlavné mesto SR Bratislava (CC BY 4.0)', 'Timetable © DPB, City of Bratislava (CC BY 4.0)'),
+        t('Regionálne autobusy: IDS BK', 'Regional buses: IDS BK'),
+      ],
+    })
+    const nav = new maplibregl.NavigationControl({ showCompass: false })
+    m.addControl(attribution, 'bottom-right')
+    // Bottom controls stack upwards: this one sits above the attribution.
+    m.addControl(newsControl, 'bottom-right')
+    m.addControl(nav, 'top-right')
+    m.addControl(locateControl, 'top-right')
+    m.addControl(speedControl, 'top-right')
+    controls = [attribution, newsControl, nav, locateControl, speedControl]
+    controlsSeq++
+    // The compact attribution starts open and covers the bottom of a phone screen.
+    const close = () => el.querySelector('.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')
+    if (m.loaded()) requestAnimationFrame(close)
+    else m.once('load', close)
+  }
   let loaded = $state(false)
 
   // The planner option drawn on the map: the selected one, or the first while the list shows.
@@ -191,7 +232,7 @@
       const b = document.createElement('button')
       b.type = 'button'
       b.className = 'maplibregl-ctrl-geolocate'
-      b.title = 'Moja poloha a odchody v okolí'
+      b.title = t('Moja poloha a odchody v okolí', 'My location and departures nearby')
       b.setAttribute('aria-label', b.title)
       b.innerHTML = '<span class="maplibregl-ctrl-icon" aria-hidden="true"></span>'
       b.addEventListener('click', openNearby)
@@ -206,6 +247,7 @@
   }
 
   $effect(() => {
+    void controlsSeq
     const b = locateControl.btn
     const s = here.status
     const open = app.view.kind === 'nearby'
@@ -288,11 +330,12 @@
           properties: { role, name, color: l.color, id: id ?? '' },
         })
         for (const st of l.stops.slice(1, -1)) stops.push(pt(st.lon, st.lat, 'mid', st.name, st.stop))
-        const boardName = l.from.platform ? `${l.from.name} (${l.from.platform})` : l.from.name
+        // A ride starts and ends at stops, which always have names.
+        const boardName = l.from.platform ? `${l.from.name} (${l.from.platform})` : l.from.name!
         stops.push(pt(l.from.lon, l.from.lat, rides ? 'transfer' : 'board', boardName, l.from.stop))
         // Where a ride ends: a ring, unless the next ride starts there (its transfer ring) or it is
         // the end of the trip (the destination pin).
-        if (!last && o!.legs[i + 1]?.kind !== 'ride') stops.push(pt(l.to.lon, l.to.lat, 'alight', l.to.name, l.to.stop))
+        if (!last && o!.legs[i + 1]?.kind !== 'ride') stops.push(pt(l.to.lon, l.to.lat, 'alight', l.to.name!, l.to.stop))
         rides++
       }
       for (const [role, val] of [['from', v.from], ['to', v.to]] as const) {
@@ -420,7 +463,6 @@
   const speedButton = document.createElement('button')
   speedButton.type = 'button'
   speedButton.className = 'speed-toggle'
-  speedButton.title = speedButton.ariaLabel = 'Rýchlosť jazdy'
   speedButton.innerHTML =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 15l3.5-5"/><circle cx="12" cy="15.5" r="1.3"/></svg>'
   // Typical is the default: it covers the whole network at any hour; the live view is one tap away.
@@ -441,7 +483,6 @@
   const newsButton = document.createElement('button')
   newsButton.type = 'button'
   newsButton.className = 'news-toggle'
-  newsButton.title = 'Čo je nové'
   newsButton.innerHTML =
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg>'
   newsButton.onclick = () => (app.view.kind === 'news' ? closePanel() : navigate({ kind: 'news' }))
@@ -955,7 +996,7 @@
       source: 'vehicles',
       filter: ['get', 'mine'],
       layout: {
-        'text-field': 'Váš spoj',
+        'text-field': t('Váš spoj', 'Your vehicle'),
         'text-font': ['Noto Sans Bold'],
         'text-size': 11.5,
         'text-anchor': 'bottom',
@@ -1035,7 +1076,7 @@
         const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
         const code = f && String(f.properties.station ?? f.properties.code ?? '')
         if (code && app.stations[code]) setPlanEnd(end, code)
-        else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        else setPlanEnd(end, pointValue(e.lngLat.lat, e.lngLat.lng))
         return
       }
       if (app.view.kind === 'reach') {
@@ -1047,7 +1088,7 @@
         const f = m.queryRenderedFeatures(box(e.point, r), { layers: ['stations', 'stops', 'station-sel'] })[0]
         const code = f && String(f.properties.station ?? f.properties.code ?? '')
         if (code && app.stations[code]) setPlanEnd('from', code)
-        else setPlanEnd('from', pointValue(e.lngLat.lat, e.lngLat.lng), 'Bod na mape')
+        else setPlanEnd('from', pointValue(e.lngLat.lat, e.lngLat.lng))
         return
       }
       const vs = m.queryRenderedFeatures(box(e.point, r), { layers: ['veh-body', 'veh-body-dim'] })
@@ -1099,32 +1140,14 @@
         [18.6, 49.15],
       ],
       attributionControl: false,
-      locale: {
-        'NavigationControl.ZoomIn': 'Priblížiť',
-        'NavigationControl.ZoomOut': 'Oddialiť',
-        'AttributionControl.ToggleAttribution': 'Zdroje dát',
-        'AttributionControl.MapFeedback': 'Nahlásiť chybu mapy',
-      },
+      locale: mapLocale(),
       dragRotate: false,
       pitchWithRotate: false,
     })
     m.touchZoomRotate.disableRotation()
     m.keyboard.disableRotation()
-    m.addControl(
-      new maplibregl.AttributionControl({
-        compact: true,
-        customAttribution: ['Cestovný poriadok © DPB, Hlavné mesto SR Bratislava (CC BY 4.0)', 'Regionálne autobusy: IDS BK'],
-      }),
-      'bottom-right',
-    )
-    // Bottom controls stack upwards: this one sits above the attribution.
-    m.addControl(newsControl, 'bottom-right')
-    m.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right')
-    m.addControl(locateControl, 'top-right')
-    m.addControl(speedControl, 'top-right')
+    addControls(m)
     m.on('load', () => {
-      // The compact attribution starts open and covers the bottom of a phone screen.
-      el.querySelector('.maplibregl-compact-show')?.classList.remove('maplibregl-compact-show')
       setup(m)
       loaded = true
     })
@@ -1133,6 +1156,23 @@
       cancelAnimationFrame(raf)
       m.remove()
     }
+  })
+
+  // A language change: MapLibre reads its UI strings when a control is added, so the controls are
+  // added again with the new strings.
+  let shownLang = prefs.lang
+  $effect(() => {
+    const lang = prefs.lang
+    if (!map || lang === shownLang) return
+    shownLang = lang
+    untrack(() => {
+      const m = map!
+      m._locale = { ...m._locale, ...mapLocale() }
+      m.getCanvas().setAttribute('aria-label', m._getUIString('Map.Title'))
+      for (const c of controls) m.removeControl(c)
+      addControls(m)
+      if (loaded) m.setLayoutProperty('veh-tag', 'text-field', t('Váš spoj', 'Your vehicle'))
+    })
   })
 
   // New positions: animate from where markers are now.
@@ -1203,7 +1243,7 @@
   $effect(() => {
     const o = planOpt
     const v = app.view
-    void [app.stations, app.plan, app.speed != null]
+    void [app.stations, app.plan, app.speed != null, prefs.lang]
     if (!loaded) return
     untrack(() => {
       updatePlan()
@@ -1307,7 +1347,7 @@
   $effect(() => {
     const isNew = unread()
     newsButton.classList.toggle('unread', isNew)
-    newsButton.ariaLabel = isNew ? 'Čo je nové (nové novinky)' : 'Čo je nové'
+    newsButton.ariaLabel = isNew ? t('Čo je nové (nové novinky)', "What's new (new entries)") : t('Čo je nové', "What's new")
     newsButton.setAttribute('aria-pressed', String(app.view.kind === 'news'))
   })
 
@@ -1366,7 +1406,7 @@
   })
 </script>
 
-<div class="map" bind:this={el} role="application" aria-label="Mapa vozidiel MHD"></div>
+<div class="map" bind:this={el} role="application" aria-label={t('Mapa vozidiel MHD', 'Map of public transport vehicles')}></div>
 
 <style>
   .map {

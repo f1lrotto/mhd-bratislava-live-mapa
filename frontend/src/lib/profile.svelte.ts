@@ -2,7 +2,9 @@
 // (auth/, Better Auth) behind /api/auth. Signed out, the profile is empty; pinning asks to sign in
 // and pins once signed in.
 import { track } from './analytics.svelte'
+import { t } from './i18n'
 import { isHere, markHere, pointValue } from './places'
+import { type Lang, prefs, setPrefs } from './prefs.svelte'
 import { app, navigate, type View } from './state.svelte'
 
 export type FavoriteKind = 'station' | 'line' | 'route'
@@ -19,8 +21,8 @@ export interface Favorite {
 /** Every preference is optional; unset means the app's default. The accounts server checks them
  * (Preferences in auth/profile.js): a new one is a new key in both. */
 export interface Preferences {
-  /** The UI language. */
-  lang?: 'sk' | 'en'
+  /** The UI language; this device's choice (lib/prefs.svelte.ts) until the user picks one signed in. */
+  lang?: Lang
   /** What the installed app opens to; unset is the favourites. */
   start?: 'favorites' | 'map'
 }
@@ -51,7 +53,6 @@ interface ProfileResponse {
 
 /** A route end that means "where I am when I open it", stored instead of coordinates. */
 export const HERE = 'here'
-const MY_LOCATION = 'Moja poloha'
 
 class ProfileState {
   /** False until the first /profile answer, so nothing flashes "signed out" while it loads. */
@@ -108,6 +109,9 @@ export async function loadProfile(retries = 4): Promise<void> {
   profile.mail = p.mail
   profile.failed = false
   profile.loaded = true
+  // The profile's language wins; a profile without one takes the language chosen on this device.
+  if (profile.user && p.preferences.lang) setPrefs({ lang: p.preferences.lang })
+  else if (profile.user && prefs.lang !== 'sk') await setPreferences({ lang: prefs.lang }).catch(() => {})
   // A star tapped while signed out (or while the profile couldn't load) pins now.
   const pin = profile.pending
   if (profile.user && pin) {
@@ -281,6 +285,13 @@ export async function setPreferences(p: { [K in keyof Preferences]: Preferences[
   for (const [key, value] of Object.entries(p)) track('preference_changed', { key, value: value ?? 'default' })
 }
 
+/** Switch the UI language: on this device, and in the profile when signed in. */
+export async function setLang(lang: Lang): Promise<void> {
+  setPrefs({ lang })
+  if (profile.user) await setPreferences({ lang })
+  else track('preference_changed', { key: 'lang', value: lang })
+}
+
 export function isFavorite(kind: FavoriteKind, ref: string | null): boolean {
   return !!ref && profile.favorites.some((f) => f.kind === kind && f.ref === ref)
 }
@@ -315,14 +326,12 @@ export async function setFavorite(kind: FavoriteKind, ref: string, on: boolean, 
 
 const isPoint = (v: string) => /^-?[\d.]+,-?[\d.]+$/.test(v)
 
-/** The favourite of a planned route: "Moja poloha" is pinned as HERE, map points with their name. */
+/** The favourite of a planned route: the user's location is pinned as HERE, map points by their
+ * coordinates. Their labels follow the UI language, so no names are stored. */
 export function routeFavorite(from: string | null, to: string | null): { ref: string; names: Favorite['names'] } | null {
   if (!from || !to) return null
   const end = (v: string) => (isHere(v) ? HERE : v)
-  const names: { from?: string; to?: string } = {}
-  for (const [k, v] of [['from', from], ['to', to]] as const)
-    if (isPoint(v) && end(v) !== HERE) names[k] = app.placeNames[v] ?? 'Bod na mape'
-  return { ref: `${end(from)}>${end(to)}`, names: Object.keys(names).length ? names : null }
+  return { ref: `${end(from)}>${end(to)}`, names: null }
 }
 
 export function routeEnds(f: Favorite): { from: string; to: string } {
@@ -333,8 +342,8 @@ export function routeEnds(f: Favorite): { from: string; to: string } {
 /** A route end's label in the favourites list. */
 export function endLabel(f: Favorite, end: 'from' | 'to'): string {
   const v = routeEnds(f)[end]
-  if (v === HERE) return MY_LOCATION
-  if (isPoint(v)) return f.names?.[end] ?? 'Bod na mape'
+  if (v === HERE) return t('Moja poloha', 'My location')
+  if (isPoint(v)) return t('Bod na mape', 'Point on the map')
   return app.stations[v]?.name ?? v
 }
 
@@ -355,18 +364,15 @@ export async function favoriteView(f: Favorite): Promise<View> {
   if (f.kind === 'station') return { kind: 'station', code: f.ref, stop: null }
   if (f.kind === 'line') return { kind: 'line', line: f.ref, dir: null }
   const ends = routeEnds(f)
-  const names: Record<string, string> = {}
   let loc: string | null | undefined
   const out: Record<'from' | 'to', string | null> = { from: null, to: null }
   for (const end of ['from', 'to'] as const) {
     let v: string | null = ends[end]
     if (v === HERE) {
       loc = loc === undefined ? await here() : loc
-      v = loc
-      if (v) names[markHere(v)] = MY_LOCATION
-    } else if (isPoint(v)) names[v] = f.names?.[end] ?? 'Bod na mape'
+      v = loc && markHere(loc)
+    }
     out[end] = v
   }
-  app.placeNames = { ...app.placeNames, ...names }
   return { kind: 'plan', from: out.from, to: out.to, at: null, opt: null }
 }

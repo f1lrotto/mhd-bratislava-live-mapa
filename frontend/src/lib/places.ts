@@ -1,4 +1,5 @@
 import { fold } from './format'
+import { locale, t } from './i18n'
 import { app, navigate } from './state.svelte'
 import type { PlanOption } from './types'
 
@@ -20,7 +21,7 @@ export function placeCoords(v: string | null): [number, number] | null {
 
 export function placeLabel(v: string | null): string {
   if (!v) return ''
-  if (POINT.test(v)) return app.placeNames[v] ?? 'Bod na mape'
+  if (POINT.test(v)) return isHere(v) ? t('Moja poloha', 'My location') : t('Bod na mape', 'Point on the map')
   return app.stations[v]?.name ?? v
 }
 
@@ -36,12 +37,12 @@ export function searchStations(query: string, limit = 8): { code: string; name: 
     const score = i === 0 ? 0 : /[\s,.\-/(]/.test(n[i - 1]) ? 1 : 2
     hits.push({ code, name: st.name, lines: st.lines, score })
   }
-  hits.sort((a, b) => a.score - b.score || b.lines.length - a.lines.length || a.name.localeCompare(b.name, 'sk'))
+  hits.sort((a, b) => a.score - b.score || b.lines.length - a.lines.length || a.name.localeCompare(b.name, locale()))
   return hits.slice(0, limit)
 }
 
-// Points that are the user's location ("Moja poloha"), known by value rather than by their label,
-// which the UI may translate: a pinned route stores them as "here", never as coordinates.
+// Points that are the user's location, known by value: placeLabel names them in the visitor's
+// language, and a pinned route stores them as "here", never as coordinates.
 const herePoints = new Set<string>()
 
 /** Mark a point as the user's location; returns it. */
@@ -54,8 +55,7 @@ export const isHere = (v: string): boolean => herePoints.has(v)
 
 /** Set one end of the open plan (a station code or a point), keeping the other end and the time;
  * in the reachability view, its starting point. */
-export function setPlanEnd(end: 'from' | 'to', value: string, name?: string): void {
-  if (name) app.placeNames = { ...app.placeNames, [value]: name }
+export function setPlanEnd(end: 'from' | 'to', value: string): void {
   const v = app.view
   if (v.kind === 'plan') navigate({ ...v, [end]: value, opt: null }, { replace: true })
   else if (v.kind === 'reach' && end === 'from') navigate({ ...v, from: value }, { replace: true })

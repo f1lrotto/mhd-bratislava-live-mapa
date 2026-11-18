@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getJson } from '../lib/api'
-  import { plural } from '../lib/format'
+  import { percent } from '../lib/format'
+  import { count, locale, t } from '../lib/i18n'
   import { app, navigate } from '../lib/state.svelte'
   import type { LineReliability, ReliabilityDirection } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
@@ -33,24 +34,28 @@
   const dupHeadsign = (d: ReliabilityDirection) => (rel?.directions.filter((x) => x.headsign === d.headsign).length ?? 0) > 1
   const tabLabel = (d: ReliabilityDirection) => (dupHeadsign(d) ? `${d.from} → ${d.headsign}` : d.headsign)
 
-  /** "2,4 min", "−0,3 min", "12 min". */
+  /** "2,4 min", "−0,3 min", "12 min" ("2.4 min" in English). */
   function mins(s: number | null | undefined): string {
     if (s == null) return '–'
     const m = s / 60
     if (Math.abs(m) < 0.05) return '0 min'
-    const t = Math.abs(m) >= 10 ? String(Math.round(m)) : m.toFixed(1).replace('.', ',')
-    return `${t.replace('-', '−')} min`
+    const v = Math.abs(m) >= 10 ? String(Math.round(m)) : m.toFixed(1).replace('.', t(',', '.'))
+    return `${v.replace('-', '−')} min`
   }
-  const pct = (x: number | null | undefined) => (x == null ? '–' : `${Math.round(x * 100)} %`)
+  const num = (n: number) => n.toLocaleString(locale())
+  const trips = (n: number) => t(`${num(n)} spojov`, `${num(n)} ${n === 1 ? 'trip' : 'trips'}`)
+  const departures = (n: number) => t(`${num(n)} odjazdov`, `${num(n)} ${n === 1 ? 'departure' : 'departures'}`)
   const hourText = (h: number) => `${h % 24}:00`
+  /** "17. 11." / "17/11". */
   const dayText = (iso: string) => {
     const [, m, d] = iso.split('-')
-    return `${+d}. ${+m}.`
+    return t(`${+d}. ${+m}.`, `${+d}/${+m}`)
   }
 
   // Sequential scale: on time is pale green, then yellow, orange and red as the delay grows.
+  // The first label, "do ½" / "under ½", is translated where the legend shows it.
   const STEPS: [number, string, string][] = [
-    [30, '#d9f0d3', 'do ½'],
+    [30, '#d9f0d3', '½'],
     [60, '#a6dba0', '1'],
     [120, '#fee391', '2'],
     [180, '#fec44f', '3'],
@@ -106,69 +111,76 @@
   })
 
   function pick(e: Event) {
-    const t = (e.target as HTMLElement).closest<HTMLElement>('[data-k]')
-    if (t && current) picked = { dir: current.id, k: +t.dataset.k!, i: +t.dataset.i! }
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-k]')
+    if (el && current) picked = { dir: current.id, k: +el.dataset.k!, i: +el.dataset.i! }
   }
 
   function daysText(r: LineReliability): string {
     const n = r.days.count
     const what = weekends
-      ? plural(n, 'víkendový deň', 'víkendové dni', 'víkendových dní')
-      : plural(n, 'pracovný deň', 'pracovné dni', 'pracovných dní')
+      ? count(n, ['víkendový deň', 'víkendové dni', 'víkendových dní'], ['weekend day', 'weekend days'])
+      : count(n, ['pracovný deň', 'pracovné dni', 'pracovných dní'], ['working day', 'working days'])
     return r.days.from && r.days.to ? `${what} (${dayText(r.days.from)} – ${dayText(r.days.to)})` : what
   }
 
   const setDir = (id: string) => navigate({ kind: 'reliability', line, dir: id, weekends }, { replace: true })
   const setDays = (w: boolean) => navigate({ kind: 'reliability', line, dir, weekends: w }, { replace: true })
   // Opened by a deep link there's no history to go back to: back goes to the live line instead.
-  const back = $derived(app.canBack ? undefined : { label: `Linka ${line} naživo`, go: () => navigate({ kind: 'line', line, dir }) })
+  const back = $derived(app.canBack ? undefined : { label: t(`Linka ${line} naživo`, `Line ${line} live`), go: () => navigate({ kind: 'line', line, dir }) })
 </script>
 
-<Panel tall label="Spoľahlivosť linky {line}" onback={back}>
+<Panel tall label={t(`Spoľahlivosť linky ${line}`, `Line ${line} reliability`)} onback={back}>
   {#snippet header()}
     <LineBadge {line} size="lg" />
     <div class="head-text">
-      <strong>Spoľahlivosť linky {line}</strong>
-      <span class="muted">meškanie za posledné 4 týždne</span>
+      <strong>{t(`Spoľahlivosť linky ${line}`, `Line ${line} reliability`)}</strong>
+      <span class="muted">{t('meškanie za posledné 4 týždne', 'delays over the last 4 weeks')}</span>
     </div>
   {/snippet}
 
-  <div class="seg" role="group" aria-label="Dni">
-    <button aria-pressed={!weekends} class:active={!weekends} onclick={() => setDays(false)}>Pracovné dni</button>
-    <button aria-pressed={weekends} class:active={weekends} onclick={() => setDays(true)}>Víkendy</button>
+  <div class="seg" role="group" aria-label={t('Dni', 'Days')}>
+    <button aria-pressed={!weekends} class:active={!weekends} onclick={() => setDays(false)}>{t('Pracovné dni', 'Working days')}</button>
+    <button aria-pressed={weekends} class:active={weekends} onclick={() => setDays(true)}>{t('Víkendy', 'Weekends')}</button>
   </div>
 
   {#if !rel}
     {#if error}
       <p class="note error">
-        {error.startsWith('unknown line') ? `Linka ${line} neexistuje.` : `Štatistiky sa nepodarilo načítať (${error}).`}
+        {error.startsWith('unknown line')
+          ? t(`Linka ${line} neexistuje.`, `Line ${line} doesn't exist.`)
+          : t(`Štatistiky sa nepodarilo načítať (${error}).`, `Couldn't load the statistics (${error}).`)}
       </p>
     {:else}
       <div class="skeleton" aria-busy="true"><div></div><div></div><div></div></div>
     {/if}
   {:else if !rel.days.count}
     <p class="note">
-      Zatiaľ nie je uložený žiadny celý {weekends ? 'víkendový' : 'pracovný'} deň. Záznamy dňa sa ukladajú v noci o dva dni neskôr.
+      {weekends
+        ? t('Zatiaľ nie je uložený žiadny celý víkendový deň.', 'No full weekend day has been stored yet.')
+        : t('Zatiaľ nie je uložený žiadny celý pracovný deň.', 'No full working day has been stored yet.')}
+      {t('Záznamy dňa sa ukladajú v noci o dva dni neskôr.', "A day's records are stored overnight two days later.")}
     </p>
   {:else if !rel.summary.trips}
-    <p class="note">Za {daysText(rel)} nie sú pre linku {line} žiadne záznamy o spojoch.</p>
+    <p class="note">
+      {t(`Za ${daysText(rel)} nie sú pre linku ${line} žiadne záznamy o spojoch.`, `There are no trip records for line ${line} over ${daysText(rel)}.`)}
+    </p>
   {:else}
     <div class="big">
       <div class="fact">
         <span class="value">{mins(rel.summary.p90)}</span>
-        <span class="label">p90 meškania: 9 z 10 odjazdov meškalo menej</span>
+        <span class="label">{t('p90 meškania: 9 z 10 odjazdov meškalo menej', 'p90 delay: 9 in 10 departures were less late')}</span>
       </div>
       <div class="fact">
-        <span class="value">{pct(rel.summary.lateTrips)}</span>
-        <span class="label">spojov meškalo 5+ min aspoň na jednej zastávke</span>
+        <span class="value">{percent(rel.summary.lateTrips)}</span>
+        <span class="label">{t('spojov meškalo 5+ min aspoň na jednej zastávke', 'of trips were 5+ min late at one stop or more')}</span>
       </div>
     </div>
     <p class="muted small basis">
-      Celá linka · {daysText(rel)} · {rel.summary.trips.toLocaleString('sk-SK')} spojov · medián {mins(rel.summary.p50)}
+      {t('Celá linka', 'Whole line')} · {daysText(rel)} · {trips(rel.summary.trips)} · {t('medián', 'median')} {mins(rel.summary.p50)}
     </p>
 
     {#if rel.directions.length > 1}
-      <div class="tabs" class:many={rel.directions.length > 2} role="group" aria-label="Smer">
+      <div class="tabs" class:many={rel.directions.length > 2} role="group" aria-label={t('Smer', 'Direction')}>
         {#each rel.directions as d (d.id)}
           <button aria-pressed={d.id === current?.id} class:active={d.id === current?.id} onclick={() => setDir(d.id)}>
             {#if !dupHeadsign(d)}<span class="arrow" aria-hidden="true">→</span>{/if}
@@ -181,37 +193,48 @@
     {#if current}
       {@const s = current.summary}
       {#if !s.trips}
-        <p class="note">V tomto smere nie sú za tieto dni žiadne záznamy.</p>
+        <p class="note">{t('V tomto smere nie sú za tieto dni žiadne záznamy.', 'There are no records in this direction for these days.')}</p>
       {:else}
         <p class="dir-summary">
-          Smer {current.headsign}: p90 <strong>{mins(s.p90)}</strong>, 5+ min meškalo
-          <strong>{pct(s.lateTrips)}</strong> z {s.trips.toLocaleString('sk-SK')} spojov.
+          {t('Smer', 'Towards')} {current.headsign}: p90 <strong>{mins(s.p90)}</strong>, {t('5+ min meškalo', '')}
+          <strong>{percent(s.lateTrips)}</strong>
+          {t(`z ${trips(s.trips)}.`, `of ${trips(s.trips)} were 5+ min late.`)}
         </p>
         <ul class="insights">
           {#if worst && worst.v >= 60}
             <li>
-              Najviac mešká pri zastávke <strong>{current.stops[worst.k]}</strong> okolo {hourText(current.hours[worst.i])}
-              ({metric === 'median' ? 'medián' : 'p90'} {mins(worst.v)}).
+              {t('Najviac mešká pri zastávke', 'Delays are worst at')} <strong>{current.stops[worst.k]}</strong>
+              {t('okolo', 'around')} {hourText(current.hours[worst.i])}
+              ({metric === 'median' ? t('medián', 'median') : 'p90'} {mins(worst.v)}).
             </li>
           {:else}
-            <li>V tomto smere jazdí linka väčšinou načas.</li>
+            <li>{t('V tomto smere jazdí linka väčšinou načas.', 'In this direction the line mostly runs on time.')}</li>
           {/if}
           {#if buildup && buildup.s >= 60}
             <li>
-              Meškanie najviac narastá medzi <strong>{current.stops[buildup.from]}</strong> a
-              <strong>{current.stops[buildup.to]}</strong> (medián +{mins(buildup.s)}).
+              {t('Meškanie najviac narastá medzi', 'The delay grows the most between')} <strong>{current.stops[buildup.from]}</strong>
+              {t('a', 'and')}
+              <strong>{current.stops[buildup.to]}</strong> ({t('medián', 'median')} +{mins(buildup.s)}).
             </li>
           {/if}
         </ul>
 
-        <h3 class="section">Meškanie podľa zastávky a hodiny</h3>
-        <div class="seg small-seg" role="group" aria-label="Ukazovateľ">
-          <button aria-pressed={metric === 'median'} class:active={metric === 'median'} onclick={() => (metric = 'median')}>Bežný spoj (medián)</button>
-          <button aria-pressed={metric === 'p90'} class:active={metric === 'p90'} onclick={() => (metric = 'p90')}>Horšie spoje (p90)</button>
+        <h3 class="section">{t('Meškanie podľa zastávky a hodiny', 'Delay by stop and hour')}</h3>
+        <div class="seg small-seg" role="group" aria-label={t('Ukazovateľ', 'Measure')}>
+          <button aria-pressed={metric === 'median'} class:active={metric === 'median'} onclick={() => (metric = 'median')}
+            >{t('Bežný spoj (medián)', 'Typical trip (median)')}</button
+          >
+          <button aria-pressed={metric === 'p90'} class:active={metric === 'p90'} onclick={() => (metric = 'p90')}
+            >{t('Horšie spoje (p90)', 'Worse trips (p90)')}</button
+          >
         </div>
         <p class="muted small explain">
-          {metric === 'median' ? 'Medián meškania pri odjazde zo zastávky' : 'p90 meškania: 1 z 10 spojov meškal viac'}, podľa
-          hodiny v cestovnom poriadku. Ťuknite na políčko.
+          {metric === 'median'
+            ? t('Medián meškania pri odjazde zo zastávky', 'Median delay when leaving the stop')
+            : t('p90 meškania: 1 z 10 spojov meškal viac', 'p90 delay: 1 in 10 trips was later')}{t(
+            ', podľa hodiny v cestovnom poriadku. Ťuknite na políčko.',
+            ', by timetabled hour. Tap a cell.',
+          )}
         </p>
 
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -221,7 +244,10 @@
           onclick={pick}
           onpointerover={(e) => e.pointerType === 'mouse' && pick(e)}
           role="img"
-          aria-label="Mapa meškania smeru {current.headsign}: zastávky v riadkoch, hodiny v stĺpcoch"
+          aria-label={t(
+            `Mapa meškania smeru ${current.headsign}: zastávky v riadkoch, hodiny v stĺpcoch`,
+            `Delay map towards ${current.headsign}: stops in rows, hours in columns`,
+          )}
         >
           <span></span>
           {#each current.hours as h, i (i)}
@@ -247,17 +273,21 @@
             <strong>{cell.stop}</strong>
             <span class="muted">{hourText(cell.hour)}–{hourText(cell.hour + 1)}</span>
             {#if cell.median != null}
-              <span>medián <b>{mins(cell.median)}</b> · p90 <b>{mins(cell.p90)}</b> · 5+ min {pct(cell.late)}</span>
-              <span class="muted small">{(cell.n ?? 0).toLocaleString('sk-SK')} odjazdov</span>
+              <span>{t('medián', 'median')} <b>{mins(cell.median)}</b> · p90 <b>{mins(cell.p90)}</b> · 5+ min {percent(cell.late)}</span>
+              <span class="muted small">{departures(cell.n ?? 0)}</span>
             {:else}
-              <span class="muted">{cell.n ? `len ${cell.n} odjazdov, málo na štatistiku` : 'žiadne spoje'}</span>
+              <span class="muted"
+                >{cell.n
+                  ? t(`len ${cell.n} odjazdov, málo na štatistiku`, `only ${departures(cell.n)}, too few for statistics`)
+                  : t('žiadne spoje', 'no trips')}</span
+              >
             {/if}
           </div>
         {/if}
 
         <div class="legend" aria-hidden="true">
-          {#each STEPS as [, c, label] (label)}
-            <span class="key"><span class="swatch" style:background={c}></span>{label}</span>
+          {#each STEPS as [, c, label], i (label)}
+            <span class="key"><span class="swatch" style:background={c}></span>{i === 0 ? t('do ½', 'under ½') : label}</span>
           {/each}
           <span class="muted">min</span>
         </div>

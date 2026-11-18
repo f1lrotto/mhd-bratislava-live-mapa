@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { compareLines, isNight, plural } from '../lib/format'
+  import { compareLines, isNight } from '../lib/format'
+  import { count, t } from '../lib/i18n'
   import { app } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
 
@@ -22,11 +23,11 @@
       .sort((a, b) => compareLines(a.line, b.line))
     const dpb = lines.filter((l) => !l.regional)
     return [
-      { title: 'Električky', items: dpb.filter((l) => l.type === 'tram') },
-      { title: 'Trolejbusy', items: dpb.filter((l) => l.type === 'trolleybus' && !isNight(l.line)) },
-      { title: 'Autobusy', items: dpb.filter((l) => l.type === 'bus' && !isNight(l.line)) },
-      { title: 'Nočné', items: dpb.filter((l) => isNight(l.line)) },
-      { title: 'Regionálne autobusy IDS BK', items: lines.filter((l) => l.regional) },
+      { title: t('Električky', 'Trams'), items: dpb.filter((l) => l.type === 'tram') },
+      { title: t('Trolejbusy', 'Trolleybuses'), items: dpb.filter((l) => l.type === 'trolleybus' && !isNight(l.line)) },
+      { title: t('Autobusy', 'Buses'), items: dpb.filter((l) => l.type === 'bus' && !isNight(l.line)) },
+      { title: t('Nočné', 'Night'), items: dpb.filter((l) => isNight(l.line)) },
+      { title: t('Regionálne autobusy IDS BK', 'IDS BK regional buses'), items: lines.filter((l) => l.regional) },
     ].filter((g) => g.items.length)
   })
 </script>
@@ -41,7 +42,7 @@
         class:on={selected?.includes(l.line)}
         class:idle={!n}
         aria-pressed={selected ? selected.includes(l.line) : undefined}
-        aria-label="Linka {l.line}, {plural(n, 'vozidlo', 'vozidlá', 'vozidiel')}"
+        aria-label={t(`Linka ${l.line}`, `Line ${l.line}`) + ', ' + count(n, ['vozidlo', 'vozidlá', 'vozidiel'], ['vehicle', 'vehicles'])}
         onclick={() => onpick(l.line)}
       >
         <LineBadge line={l.line} />
@@ -50,7 +51,7 @@
     {/each}
   </div>
 {:else}
-  <p class="note">{Object.keys(app.lines).length ? 'Žiadna linka nezodpovedá hľadaniu.' : 'Načítavam linky…'}</p>
+  <p class="note">{Object.keys(app.lines).length ? t('Žiadna linka nezodpovedá hľadaniu.', 'No line matches the search.') : t('Načítavam linky…', 'Loading lines…')}</p>
 {/each}
 
 <style>

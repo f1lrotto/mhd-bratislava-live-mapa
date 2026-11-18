@@ -1,4 +1,5 @@
 import { hm } from './format'
+import { t } from './i18n'
 import type { SpeedOverlay } from './state.svelte'
 import type { PlanOption, SpeedData } from './types'
 
@@ -6,7 +7,7 @@ import type { PlanOption, SpeedData } from './types'
 // Up to 10 % slower counts as on schedule; timetables round to 15 s or a minute.
 export const SPEED_STEPS = [1.1, 1.3, 1.6, 2] as const
 export const SPEED_COLORS = ['#1a9850', '#e6b800', '#ef6c28', '#d7263d', '#7a1020'] as const
-export const SPEED_LABELS = ['načas', '+10 %', '+30 %', '+60 %', '2×']
+export const speedLabels = () => [t('načas', 'on time'), ...['+10', '+30', '+60'].map((p) => p + t(' %', '%')), '2×']
 
 export function speedColor(r: number): string {
   const i = SPEED_STEPS.findIndex((s) => r < s)

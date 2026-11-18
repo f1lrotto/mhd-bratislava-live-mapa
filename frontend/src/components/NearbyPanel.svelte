@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { getJson, poll } from '../lib/api'
   import { hm, minsUntil } from '../lib/format'
+  import { t } from '../lib/i18n'
   import { crowM, DETOUR, here, locate, nearestM, stopLocating, walkS } from '../lib/nearby.svelte'
   import { app, closePanel, navigate } from '../lib/state.svelte'
   import type { Departure, StationBoard } from '../lib/types'
@@ -81,22 +82,24 @@
 
   function when(r: Row): string {
     const m = minsUntil(r.predicted ?? r.scheduled, now)
-    if (m < 1) return 'teraz'
-    if (m < 60) return `o ${m} min`
+    if (m < 1) return t('teraz', 'now')
+    if (m < 60) return t(`o ${m} min`, `in ${m} min`)
     return hm(r.predicted ?? r.scheduled)
   }
 
   function leave(r: Row): string {
     const s = spare(r)
-    if (s < 0) return 'nestihnete'
-    if (s < 60) return 'vyrazte hneď'
-    return `vyrazte o ${Math.floor(s / 60)} min`
+    if (s < 0) return t('nestihnete', "you'll miss it")
+    if (s < 60) return t('vyrazte hneď', 'leave now')
+    return t(`vyrazte o ${Math.floor(s / 60)} min`, `leave in ${Math.floor(s / 60)} min`)
   }
 
   const walkMin = (s: number) => `${Math.max(1, Math.ceil(s / 60))} min`
   const dist = (crow: number) => {
     const m = crow * DETOUR
-    return m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(1).replace('.', ',')} km`
+    if (m < 1000) return `${Math.max(10, Math.round(m / 10) * 10)} m`
+    const km = (m / 1000).toFixed(1)
+    return `${t(km.replace('.', ','), km)} km`
   }
 
   function hide() {
@@ -105,45 +108,52 @@
   }
 </script>
 
-<Panel tall label="Odchody v okolí">
+<Panel tall label={t('Odchody v okolí', 'Departures nearby')}>
   {#snippet header()}
     <span class="me" aria-hidden="true"></span>
     <div class="head-text">
-      <strong>V okolí</strong>
+      <strong>{t('V okolí', 'Nearby')}</strong>
       <span class="muted small">
-        {#if here.status === 'waiting'}Zisťujem polohu…{:else if pos}Moja poloha, presnosť ±{Math.round(pos.acc)} m{:else}Moja poloha{/if}
+        {#if here.status === 'waiting'}{t('Zisťujem polohu…', 'Finding your location…')}{:else if pos}{t('Moja poloha, presnosť', 'My location, accuracy')} ±{Math.round(pos.acc)} m{:else}{t('Moja poloha', 'My location')}{/if}
       </span>
     </div>
   {/snippet}
 
   {#if here.status === 'unsupported'}
-    <p class="note">Tento prehliadač polohu nepodporuje.</p>
+    <p class="note">{t('Tento prehliadač polohu nepodporuje.', "This browser doesn't support location.")}</p>
   {:else if here.status === 'denied'}
     <p class="note error">
-      Prístup k polohe je zakázaný. Povoľte ho pre túto stránku v nastaveniach prehliadača (na iPhone aj v Nastavenia ›
-      Súkromie › Polohové služby) a skúste znova.
+      {t(
+        'Prístup k polohe je zakázaný. Povoľte ho pre túto stránku v nastaveniach prehliadača (na iPhone aj v Nastavenia › Súkromie › Polohové služby) a skúste znova.',
+        'Location access is blocked. Allow it for this site in your browser settings (on an iPhone, also in Settings › Privacy & Security › Location Services) and try again.',
+      )}
     </p>
-    <button class="secondary" onclick={locate}>Skúsiť znova</button>
+    <button class="secondary" onclick={locate}>{t('Skúsiť znova', 'Try again')}</button>
   {:else if !pos && here.status === 'unavailable'}
-    <p class="note">Polohu sa zatiaľ nepodarilo zistiť. Skontrolujte, či má telefón zapnuté určovanie polohy.</p>
-    <button class="secondary" onclick={locate}>Skúsiť znova</button>
+    <p class="note">{t('Polohu sa zatiaľ nepodarilo zistiť. Skontrolujte, či má telefón zapnuté určovanie polohy.', "Couldn't find your location yet. Check that location services are turned on on your phone.")}</p>
+    <button class="secondary" onclick={locate}>{t('Skúsiť znova', 'Try again')}</button>
   {:else if !pos}
     <div class="skeleton" aria-busy="true"><div></div><div></div><div></div></div>
   {:else if !here.nearby.length}
     {#if Object.keys(app.stations).length}
-      <p class="empty">Do 1,5 km od vás nie je žiadna zastávka MHD ani IDS BK.</p>
+      <p class="empty">{t('Do 1,5 km od vás nie je žiadna zastávka MHD ani IDS BK.', 'There are no MHD or IDS BK stops within 1.5 km of you.')}</p>
     {:else}
-      <p class="note">Načítavam zastávky…</p>
+      <p class="note">{t('Načítavam zastávky…', 'Loading stops…')}</p>
     {/if}
   {:else}
     {#if pos.acc > 150}
-      <p class="note warn">Poloha je zatiaľ nepresná (±{Math.round(pos.acc)} m), zastávky v okolí nemusia sedieť.</p>
+      <p class="note warn">
+        {t(
+          `Poloha je zatiaľ nepresná (±${Math.round(pos.acc)} m), zastávky v okolí nemusia sedieť.`,
+          `Your location isn't accurate yet (±${Math.round(pos.acc)} m), so the nearby stops may be off.`,
+        )}
+      </p>
     {/if}
 
-    <h3 class="section">Odchody</h3>
+    <h3 class="section">{t('Odchody', 'Departures')}</h3>
     {#if here.nearby.length > 1}
-      <div class="filter" role="group" aria-label="Zastávka">
-        <button class:active={!only} aria-pressed={!only} onclick={() => ((only = null), (more = false))}>Všetky</button>
+      <div class="filter" role="group" aria-label={t('Zastávka', 'Stop')}>
+        <button class:active={!only} aria-pressed={!only} onclick={() => ((only = null), (more = false))}>{t('Všetky', 'All')}</button>
         {#each here.nearby as st (st.code)}
           <button class:active={only === st.code} aria-pressed={only === st.code} onclick={() => ((only = st.code), (more = false))}>
             {st.name}
@@ -153,11 +163,11 @@
     {/if}
 
     {#if error && !loaded}
-      <p class="note error">Odchody sa nepodarilo načítať ({error}).</p>
+      <p class="note error">{t(`Odchody sa nepodarilo načítať (${error}).`, `Couldn't load the departures (${error}).`)}</p>
     {:else if !loaded}
       <div class="skeleton" aria-busy="true"><div></div><div></div><div></div></div>
     {:else if !rows.length}
-      <p class="empty">V najbližších 90 minútach odtiaľto nič nejde.</p>
+      <p class="empty">{t('V najbližších 90 minútach odtiaľto nič nejde.', 'Nothing leaves from here in the next 90 minutes.')}</p>
     {:else}
       <ul class="board">
         {#each shown as r (r.trip + r.stopId + r.scheduled)}
@@ -169,7 +179,10 @@
               class:tap={r.vehicle}
               class:missed
               role={r.vehicle ? undefined : 'group'}
-              aria-label={`Linka ${r.line} smer ${r.headsign} zo zastávky ${r.station}, ${when(r)}, ${walkMin(r.walk)} pešo, ${leave(r)}${r.vehicle ? ', otvoriť vozidlo' : ''}`}
+              aria-label={t(
+                `Linka ${r.line} smer ${r.headsign} zo zastávky ${r.station}, ${when(r)}, ${walkMin(r.walk)} pešo, ${leave(r)}${r.vehicle ? ', otvoriť vozidlo' : ''}`,
+                `Line ${r.line} to ${r.headsign} from ${r.station}, ${when(r)}, ${walkMin(r.walk)} walk, ${leave(r)}${r.vehicle ? ', open vehicle' : ''}`,
+              )}
               onclick={r.vehicle ? () => navigate({ kind: 'vehicle', key: r.vehicle! }) : undefined}
             >
               <LineBadge line={r.line} />
@@ -177,15 +190,15 @@
                 <span class="headsign">{r.headsign}</span>
                 <span class="muted small sub">
                   <span class="stn">{r.station}{r.platform ? ` ${r.platform}` : ''}</span>
-                  <span class="walk-chip" title="Pešo k nástupišťu">
+                  <span class="walk-chip" title={t('Pešo k nástupišťu', 'Walk to the platform')}>
                     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="13" cy="4" r="2" /><path d="M9 21l2-6 3 3v3M7 12l3-3 3 1 2 3 3 1M10 9l1 6" /></svg>
                     {walkMin(r.walk)}
                   </span>
                 </span>
               </span>
               <span class="dep-time">
-                <span class="rel" class:now={when(r) === 'teraz'}>
-                  {#if r.live}<span class="live-dot" title="Podľa polohy vozidla" aria-label="naživo"></span>{/if}
+                <span class="rel" class:now={when(r) === t('teraz', 'now')}>
+                  {#if r.live}<span class="live-dot" title={t('Podľa polohy vozidla', "From the vehicle's position")} aria-label={t('naživo', 'live')}></span>{/if}
                   {when(r)}
                 </span>
                 <span class="leave small" class:soon={!missed && spare(r) < 120}>{leave(r)}</span>
@@ -195,19 +208,20 @@
         {/each}
       </ul>
       {#if rows.length > shown.length}
-        <button class="secondary" onclick={() => (more = true)}>Ďalšie odchody ({rows.length - shown.length})</button>
+        <button class="secondary" onclick={() => (more = true)}>{t('Ďalšie odchody', 'More departures')} ({rows.length - shown.length})</button>
       {/if}
       <p class="muted small legend">
-        <span class="live-dot" aria-hidden="true"></span> čas podľa polohy vozidla. Chôdza je odhad podľa vzdušnej vzdialenosti.
+        <span class="live-dot" aria-hidden="true"></span>
+        {t('čas podľa polohy vozidla. Chôdza je odhad podľa vzdušnej vzdialenosti.', "time from the vehicle's position. Walks are estimated from the straight-line distance.")}
       </p>
     {/if}
 
-    <h3 class="section">Zastávky v okolí</h3>
+    <h3 class="section">{t('Zastávky v okolí', 'Stops nearby')}</h3>
     <ul class="stations">
       {#each here.nearby as st (st.code)}
         {@const m = nearestM(pos, st.pts)}
         <li>
-          <button class="st" onclick={() => navigate({ kind: 'station', code: st.code, stop: null })} aria-label="Zastávka {st.name}, {walkMin(walkS(m))} pešo, {dist(m)}">
+          <button class="st" onclick={() => navigate({ kind: 'station', code: st.code, stop: null })} aria-label={t(`Zastávka ${st.name}, ${walkMin(walkS(m))} pešo, ${dist(m)}`, `${st.name} stop, ${walkMin(walkS(m))} walk, ${dist(m)}`)}>
             <span class="pin" aria-hidden="true"></span>
             <span class="st-main">
               <span class="name">{st.name}</span>
@@ -227,7 +241,7 @@
   {/if}
 
   {#if here.status !== 'off'}
-    <button class="hide-loc small" onclick={hide}>Skryť moju polohu</button>
+    <button class="hide-loc small" onclick={hide}>{t('Skryť moju polohu', 'Hide my location')}</button>
   {/if}
 </Panel>
 

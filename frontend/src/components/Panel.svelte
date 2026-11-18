@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, type Snippet } from 'svelte'
+  import { t } from '../lib/i18n'
   import { app, closePanel } from '../lib/state.svelte'
 
   let {
@@ -48,7 +49,7 @@
     <button
       class="grab"
       onclick={() => (expanded = !expanded)}
-      aria-label={expanded ? 'Zmenšiť panel' : 'Zväčšiť panel'}
+      aria-label={expanded ? t('Zmenšiť panel', 'Shrink panel') : t('Zväčšiť panel', 'Expand panel')}
       aria-expanded={expanded}
     ></button>
     <header>
@@ -57,8 +58,8 @@
         <button
           class="close back"
           onclick={() => (onback ? onback.go() : history.back())}
-          aria-label={onback?.label ?? 'Späť'}
-          title={onback?.label ?? 'Späť'}
+          aria-label={onback?.label ?? t('Späť', 'Back')}
+          title={onback?.label ?? t('Späť', 'Back')}
         >
           <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
             ><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg
@@ -66,7 +67,7 @@
         </button>
       {/if}
       <div class="title">{@render header()}</div>
-      <button class="close" onclick={closePanel} aria-label="Zavrieť">
+      <button class="close" onclick={closePanel} aria-label={t('Zavrieť', 'Close')}>
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"
           ><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></svg
         >

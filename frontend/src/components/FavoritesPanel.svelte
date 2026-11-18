@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { TYPE_LABELS } from '../lib/format'
+  import { typeLabel } from '../lib/format'
+  import { locale, t } from '../lib/i18n'
+  import { prefs } from '../lib/prefs.svelte'
   import { track } from '../lib/analytics.svelte'
   import { endLabel, favoriteView, HERE, profile, routeEnds, type Favorite } from '../lib/profile.svelte'
   import { app, navigate } from '../lib/state.svelte'
@@ -9,7 +11,7 @@
 
   const of = (kind: Favorite['kind']) => profile.favorites.filter((f) => f.kind === kind)
   const stations = $derived(of('station'))
-  const lines = $derived(of('line').toSorted((a, b) => a.ref.localeCompare(b.ref, 'sk', { numeric: true })))
+  const lines = $derived(of('line').toSorted((a, b) => a.ref.localeCompare(b.ref, locale(), { numeric: true })))
   const routes = $derived(of('route'))
 
   /** "Hlavná stanica – Dúbravka": the line's distinct headsigns. */
@@ -17,7 +19,7 @@
     const info = app.lines[line]
     if (!info) return ''
     const heads = [...new Set(Object.values(info.directions).map((d) => d.headsign))]
-    return heads.slice(0, 2).join(' – ') || TYPE_LABELS[info.type]
+    return heads.slice(0, 2).join(' – ') || typeLabel(info.type)
   }
 
   let busy = $state<string | null>(null)
@@ -31,33 +33,46 @@
   const routeLabel = (f: Favorite) => `${endLabel(f, 'from')} → ${endLabel(f, 'to')}`
 </script>
 
-<Panel tall label="Obľúbené">
+<Panel tall label={t('Obľúbené', 'Favourites')}>
   {#snippet header()}
     <svg class="head-icon" viewBox="0 0 24 24" aria-hidden="true"
       ><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" /></svg
     >
-    <strong>Obľúbené</strong>
+    <strong>{t('Obľúbené', 'Favourites')}</strong>
   {/snippet}
 
   {#if !profile.loaded}
     <div class="skeleton" aria-busy="true"><div></div><div></div></div>
   {:else if !profile.user && profile.failed}
-    <p class="note error">Obľúbené sa teraz nedajú načítať. Skontrolujte pripojenie; skúsime to znova, keď sa vrátite do aplikácie.</p>
+    <p class="note error">
+      {t(
+        'Obľúbené sa teraz nedajú načítať. Skontrolujte pripojenie; skúsime to znova, keď sa vrátite do aplikácie.',
+        "Your favourites can't be loaded right now. Check your connection; we'll try again when you come back to the app.",
+      )}
+    </p>
   {:else if !profile.user}
     <p class="note">
-      Prihláste sa a pripnite si zastávky, linky a trasy, ktoré používate najčastejšie. Uvidíte ich tu na každom zariadení,
-      kde sa prihlásite, a nainštalovaná aplikácia sa otvorí rovno na nich.
+      {#if prefs.lang === 'en'}
+        Sign in and pin the stops, lines and routes you use most. You'll see them here on every device you sign in on, and
+        the installed app will open straight to them.
+      {:else}
+        Prihláste sa a pripnite si zastávky, linky a trasy, ktoré používate najčastejšie. Uvidíte ich tu na každom zariadení,
+        kde sa prihlásite, a nainštalovaná aplikácia sa otvorí rovno na nich.
+      {/if}
     </p>
-    <button class="primary" onclick={() => navigate({ kind: 'account' })}>Prihlásiť sa alebo vytvoriť účet</button>
+    <button class="primary" onclick={() => navigate({ kind: 'account' })}>{t('Prihlásiť sa alebo vytvoriť účet', 'Sign in or create an account')}</button>
   {:else}
     {#if !profile.favorites.length}
       <p class="note">
-        Zatiaľ nemáte nič pripnuté. Ťuknite na hviezdičku pri zastávke, linke alebo nájdenej trase a pridá sa sem.
+        {t(
+          'Zatiaľ nemáte nič pripnuté. Ťuknite na hviezdičku pri zastávke, linke alebo nájdenej trase a pridá sa sem.',
+          "You haven't pinned anything yet. Tap the star next to a stop, line or route you've found and it will appear here.",
+        )}
       </p>
     {/if}
 
     {#if stations.length}
-      <h3 class="section">Zastávky</h3>
+      <h3 class="section">{t('Zastávky', 'Stops')}</h3>
       <ul class="favs">
         {#each stations as f (f.ref)}
           {@const st = app.stations[f.ref]}
@@ -72,7 +87,7 @@
                     {#if st.lines.length > 8}<span class="muted small">+{st.lines.length - 8}</span>{/if}
                   </span>
                 {:else if Object.keys(app.stations).length}
-                  <span class="muted small">Zastávka už nie je v cestovnom poriadku</span>
+                  <span class="muted small">{t('Zastávka už nie je v cestovnom poriadku', 'The stop is no longer in the timetable')}</span>
                 {/if}
               </span>
             </button>
@@ -83,22 +98,22 @@
     {/if}
 
     {#if lines.length}
-      <h3 class="section">Linky</h3>
+      <h3 class="section">{t('Linky', 'Lines')}</h3>
       <ul class="favs">
         {#each lines as f (f.ref)}
           <li>
             <button class="row" onclick={() => open(f)}>
               <LineBadge line={f.ref} />
-              <span class="main"><span class="name">{lineText(f.ref) || `Linka ${f.ref}`}</span></span>
+              <span class="main"><span class="name">{lineText(f.ref) || t(`Linka ${f.ref}`, `Line ${f.ref}`)}</span></span>
             </button>
-            <FavButton kind="line" ref={f.ref} label="linka {f.ref}" />
+            <FavButton kind="line" ref={f.ref} label={t(`linka ${f.ref}`, `line ${f.ref}`)} />
           </li>
         {/each}
       </ul>
     {/if}
 
     {#if routes.length}
-      <h3 class="section">Trasy</h3>
+      <h3 class="section">{t('Trasy', 'Routes')}</h3>
       <ul class="favs">
         {#each routes as f (f.ref)}
           <li>
@@ -109,8 +124,8 @@
                 /></svg
               >
               <span class="main">
-                <span class="name">{endLabel(f, 'from')} <span aria-hidden="true">→</span><span class="sr">do</span> {endLabel(f, 'to')}</span>
-                {#if busy === f.ref}<span class="muted small">Zisťujem vašu polohu…</span>{/if}
+                <span class="name">{endLabel(f, 'from')} <span aria-hidden="true">→</span><span class="sr">{t('do', 'to')}</span> {endLabel(f, 'to')}</span>
+                {#if busy === f.ref}<span class="muted small">{t('Zisťujem vašu polohu…', 'Finding your location…')}</span>{/if}
               </span>
             </button>
             <FavButton kind="route" ref={f.ref} names={f.names} label={routeLabel(f)} />
@@ -120,8 +135,8 @@
     {/if}
 
     <p class="who muted small">
-      Prihlásený ako {profile.user.email} ·
-      <button class="link" onclick={() => navigate({ kind: 'account' })}>Účet</button>
+      {t('Prihlásený ako', 'Signed in as')} {profile.user.email} ·
+      <button class="link" onclick={() => navigate({ kind: 'account' })}>{t('Účet', 'Account')}</button>
     </p>
   {/if}
 </Panel>

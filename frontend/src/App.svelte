@@ -21,7 +21,9 @@
   import { standalone, track } from './lib/analytics.svelte'
   import { loadStatic, poll, refreshLine, refreshLive, refreshSpeeds, refreshStatus, speedQuery } from './lib/api'
   import { passes } from './lib/filter'
-  import { loadProfile, profile } from './lib/profile.svelte'
+  import { t } from './lib/i18n'
+  import { prefs } from './lib/prefs.svelte'
+  import { loadProfile, profile, setLang } from './lib/profile.svelte'
   import { app, closePanel, feedAgeS, feedDown, filtersActive, navigate, NO_FILTERS, parseUrl, setFilters, syncBack, SLOW_POLL_MS } from './lib/state.svelte'
   import MapView from './Map.svelte'
 
@@ -119,9 +121,11 @@
 
   const age = $derived(feedAgeS())
   const down = $derived(feedDown())
-  const freshText = $derived(
-    age == null ? 'Načítavam…' : age < 60 ? `pred ${Math.round(age)} s` : `pred ${Math.floor(age / 60)} min`,
-  )
+  const freshText = $derived.by(() => {
+    if (age == null) return t('Načítavam…', 'Loading…')
+    const d = age < 60 ? `${Math.round(age)} s` : `${Math.floor(age / 60)} min`
+    return t(`pred ${d}`, `${d} ago`)
+  })
   const nFilters = $derived(filtersActive())
 
   // On phones the nav buttons sit in a menu behind a burger button.
@@ -136,6 +140,17 @@
     else navigate({ kind })
   }
 
+  // The page's language follows the preference (screen readers, hyphenation, the browser's translate offer).
+  $effect(() => {
+    document.documentElement.lang = prefs.lang
+  })
+
+  function toggleLang() {
+    menuOpen = false
+    // Signed in, the profile keeps the choice too; offline, this device still switches.
+    setLang(prefs.lang === 'en' ? 'sk' : 'en').catch(() => {})
+  }
+
   // Picking a point belongs to the planner and the reachability map; leaving them cancels the pick.
   $effect(() => {
     if (app.view.kind !== 'plan' && app.view.kind !== 'reach') untrack(() => (app.pick = null))
@@ -146,57 +161,57 @@
   <MapView {activeLine} {selectedDir} />
 
   <header class="topbar">
-    <button class="brand" onclick={() => ((menuOpen = false), closePanel())} aria-label="MHD naživo, zavrieť panel">
+    <button class="brand" onclick={() => ((menuOpen = false), closePanel())} aria-label={t('MHD naživo, zavrieť panel', 'MHD naživo, close panel')}>
       <img class="logo" src="/favicon.svg" alt="" width="22" height="22" />
       <span class="brand-text">MHD <b>naživo</b></span>
     </button>
     {#if app.view.kind === 'replay'}
       <!-- The map shows the past: no live freshness. -->
-      <div class="fresh rec" title="Mapa prehráva záznam, nie živé polohy">
+      <div class="fresh rec" title={t('Mapa prehráva záznam, nie živé polohy', 'The map is playing back a recording, not live positions')}>
         <span class="pulse" aria-hidden="true"></span>
-        <span class="fresh-text">Záznam</span>
+        <span class="fresh-text">{t('Záznam', 'Replay')}</span>
       </div>
     {:else}
-      <div class="fresh" class:bad={down} title="Kedy server naposledy načítal polohy z DPB">
+      <div class="fresh" class:bad={down} title={t('Kedy server naposledy načítal polohy z DPB', 'When the server last loaded positions from DPB')}>
         <span class="pulse" aria-hidden="true"></span>
-        <span class="fresh-text"><span class="hide-sm">Aktualizované&nbsp;</span>{freshText}</span>
+        <span class="fresh-text"><span class="hide-sm">{t('Aktualizované', 'Updated')}&nbsp;</span>{freshText}</span>
       </div>
     {/if}
     <button class="burger" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="menu" aria-label="Menu">
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d={menuOpen ? 'M6 6l12 12M18 6L6 18' : 'M4 7h16M4 12h16M4 17h16'} />
       </svg>
-      {#if nFilters && !menuOpen}<span class="count" aria-label="{nFilters} aktívne filtre">{nFilters}</span>{/if}
+      {#if nFilters && !menuOpen}<span class="count" aria-label={t(`${nFilters} aktívne filtre`, `${nFilters} active filters`)}>{nFilters}</span>{/if}
     </button>
     <nav id="menu" class:open={menuOpen}>
-      <button class:active={app.view.kind === 'favorites'} onclick={() => toggle('favorites')} aria-pressed={app.view.kind === 'favorites'} aria-label="Obľúbené" title="Obľúbené">
+      <button class:active={app.view.kind === 'favorites'} onclick={() => toggle('favorites')} aria-pressed={app.view.kind === 'favorites'} aria-label={t('Obľúbené', 'Favourites')} title={t('Obľúbené', 'Favourites')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.3 5.9.9-4.25 4.1 1 5.8L12 16.9l-5.25 2.7 1-5.8L3.5 9.7l5.9-.9z" /></svg>
-        <span class="label">Obľúbené</span>
+        <span class="label">{t('Obľúbené', 'Favourites')}</span>
       </button>
-      <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label="Trasa" title="Trasa">
+      <button class:active={app.view.kind === 'plan'} onclick={() => toggle('plan')} aria-pressed={app.view.kind === 'plan'} aria-label={t('Trasa', 'Trip planner')} title={t('Trasa', 'Trip planner')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" /><path d="M8.5 18H15a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h6.5" /></svg>
-        <span class="label">Trasa</span>
+        <span class="label">{t('Trasa', 'Trip')}</span>
       </button>
-      <button class:active={app.view.kind === 'reach'} onclick={() => toggle('reach')} aria-pressed={app.view.kind === 'reach'} aria-label="Kam sa dostanem" title="Kam sa dostanem">
+      <button class:active={app.view.kind === 'reach'} onclick={() => toggle('reach')} aria-pressed={app.view.kind === 'reach'} aria-label={t('Kam sa dostanem', 'Where can I get to')} title={t('Kam sa dostanem', 'Where can I get to')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2" /><circle cx="12" cy="12" r="6" /><circle cx="12" cy="12" r="10" /></svg>
-        <span class="label">Dosah</span>
+        <span class="label">{t('Dosah', 'Reach')}</span>
       </button>
-      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label="Linky" title="Linky">
+      <button class:active={app.view.kind === 'lines'} onclick={() => toggle('lines')} aria-pressed={app.view.kind === 'lines'} aria-label={t('Linky', 'Lines')} title={t('Linky', 'Lines')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10" /></svg>
-        <span class="label">Linky</span>
+        <span class="label">{t('Linky', 'Lines')}</span>
       </button>
-      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'} aria-label="Filtre a legenda" title="Filtre a legenda">
+      <button class:active={app.view.kind === 'filters'} onclick={() => toggle('filters')} aria-pressed={app.view.kind === 'filters'} aria-label={t('Filtre a legenda', 'Filters and legend')} title={t('Filtre a legenda', 'Filters and legend')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16l-6 7v5l-4 2v-7z" /></svg>
-        <span class="label">Filtre</span>
-        {#if nFilters}<span class="count" aria-label="{nFilters} aktívne">{nFilters}</span>{/if}
+        <span class="label">{t('Filtre', 'Filters')}</span>
+        {#if nFilters}<span class="count" aria-label={t(`${nFilters} aktívne`, `${nFilters} active`)}>{nFilters}</span>{/if}
       </button>
-      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'} aria-label="Stav dopravy" title="Stav dopravy">
+      <button class:active={app.view.kind === 'status'} onclick={() => toggle('status')} aria-pressed={app.view.kind === 'status'} aria-label={t('Stav dopravy', 'Service status')} title={t('Stav dopravy', 'Service status')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V11M12 19V5M19 19v-6" /></svg>
-        <span class="label">Stav</span>
+        <span class="label">{t('Stav', 'Status')}</span>
       </button>
-      <button class:active={app.view.kind === 'replay'} onclick={() => toggle('replay')} aria-pressed={app.view.kind === 'replay'} aria-label="Záznam jázd" title="Záznam jázd">
+      <button class:active={app.view.kind === 'replay'} onclick={() => toggle('replay')} aria-pressed={app.view.kind === 'replay'} aria-label={t('Záznam jázd', 'Replay of past journeys')} title={t('Záznam jázd', 'Replay of past journeys')}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3 4v4h4" /><path d="M12 8v4l3 2" /></svg>
-        <span class="label">Záznam</span>
+        <span class="label">{t('Záznam', 'Replay')}</span>
       </button>
       <!-- The profile: the user's initial when signed in. Icon only on wide screens, labelled in the phone menu. -->
       <button
@@ -204,15 +219,26 @@
         class:active={app.view.kind === 'account'}
         onclick={() => toggle('account')}
         aria-pressed={app.view.kind === 'account'}
-        aria-label={profile.user ? `Profil (${profile.user.email})` : profile.failed ? 'Profil' : 'Prihlásiť sa'}
-        title={profile.user ? `Profil: ${profile.user.email}` : profile.failed ? 'Profil' : 'Prihlásiť sa'}
+        aria-label={profile.user ? `${t('Profil', 'Profile')} (${profile.user.email})` : profile.failed ? t('Profil', 'Profile') : t('Prihlásiť sa', 'Sign in')}
+        title={profile.user ? `${t('Profil', 'Profile')}: ${profile.user.email}` : profile.failed ? t('Profil', 'Profile') : t('Prihlásiť sa', 'Sign in')}
       >
         {#if profile.user}
           <span class="initial" aria-hidden="true">{profile.user.email[0].toUpperCase()}</span>
         {:else}
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
         {/if}
-        <span class="label acct-label">{profile.user || profile.failed ? 'Profil' : 'Prihlásiť sa'}</span>
+        <span class="label acct-label">{profile.user || profile.failed ? t('Profil', 'Profile') : t('Prihlásiť sa', 'Sign in')}</span>
+      </button>
+      <!-- Named in the language it switches to, so a visitor who can't read the current one finds it. -->
+      <button
+        onclick={toggleLang}
+        lang={prefs.lang === 'en' ? 'sk' : 'en'}
+        aria-label={prefs.lang === 'en' ? 'Slovenčina' : 'English'}
+        title={prefs.lang === 'en' ? 'Prepnúť do slovenčiny' : 'Switch to English'}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z" /></svg>
+        <span class="lang-short" aria-hidden="true">{prefs.lang === 'en' ? 'SK' : 'EN'}</span>
+        <span class="lang-long" aria-hidden="true">{prefs.lang === 'en' ? 'Slovenčina' : 'English'}</span>
       </button>
     </nav>
   </header>
@@ -221,28 +247,34 @@
   {#if (app.view.kind !== 'replay' && (down || (app.fetchError && !app.live))) || staticError}
     <div class="banner" role="alert">
       {#if staticError}
-        Nepodarilo sa načítať linky a zastávky ({staticError}).
+        {t(`Nepodarilo sa načítať linky a zastávky (${staticError}).`, `Couldn't load the lines and stops (${staticError}).`)}
       {:else if app.live}
-        {age != null ? `Polohy vozidiel sa ${Math.floor(age / 60)} min neaktualizovali.` : 'Polohy vozidiel sa neaktualizujú.'}
-        Zobrazujeme posledné známe polohy (sivé).
+        {age != null
+          ? t(`Polohy vozidiel sa ${Math.floor(age / 60)} min neaktualizovali.`, `Vehicle positions haven't updated for ${Math.floor(age / 60)} min.`)
+          : t('Polohy vozidiel sa neaktualizujú.', "Vehicle positions aren't updating.")}
+        {t('Zobrazujeme posledné známe polohy (sivé).', 'Showing the last known positions (grey).')}
       {:else}
-        Polohy vozidiel sa nedajú načítať. Skúšame znova.
+        {t('Polohy vozidiel sa nedajú načítať. Skúšame znova.', "Vehicle positions can't be loaded. Trying again.")}
       {/if}
     </div>
   {/if}
 
   {#if app.pick}
     <div class="banner pick" role="status">
-      <span>Ťuknite na mapu alebo zastávku: <b>{app.pick === 'from' ? 'odkiaľ' : 'kam'}</b> {app.view.kind === 'reach' ? 'začínate' : 'idete'}.</span>
-      <button onclick={() => (app.pick = null)}>Zrušiť</button>
+      {#if prefs.lang === 'en'}
+        <span>Tap the map or a stop: where you're <b>{app.pick === 'from' ? (app.view.kind === 'reach' ? 'starting' : 'starting from') : 'going'}</b>.</span>
+      {:else}
+        <span>Ťuknite na mapu alebo zastávku: <b>{app.pick === 'from' ? 'odkiaľ' : 'kam'}</b> {app.view.kind === 'reach' ? 'začínate' : 'idete'}.</span>
+      {/if}
+      <button onclick={() => (app.pick = null)}>{t('Zrušiť', 'Cancel')}</button>
     </div>
   {:else if app.view.kind === 'none' && app.live && !down}
     {#if nFilters && !app.live.vehicles.some((v) => passes(v, app.filters))}
       <button class="hint-pill" onclick={() => setFilters(NO_FILTERS)}
-        >Filtre skryli všetky vozidlá · Zrušiť</button
+        >{t('Filtre skryli všetky vozidlá · Zrušiť', 'Filters hide every vehicle · Clear')}</button
       >
     {:else}
-      <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>Vyberte vozidlo alebo linku</button>
+      <button class="hint-pill" onclick={() => navigate({ kind: 'lines' })}>{t('Vyberte vozidlo alebo linku', 'Pick a vehicle or a line')}</button>
     {/if}
   {/if}
 
@@ -392,7 +424,8 @@
     stroke-linecap: round;
     stroke-linejoin: round;
   }
-  .burger {
+  .burger,
+  .lang-long {
     display: none;
   }
   .initial {
@@ -511,8 +544,12 @@
     .brand {
       padding: 0 12px;
     }
-    .hide-sm {
+    .hide-sm,
+    .lang-short {
       display: none;
+    }
+    .lang-long {
+      display: inline;
     }
     .burger {
       display: grid;

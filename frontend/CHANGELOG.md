@@ -15,6 +15,11 @@ Everything above the first day is not shown.
 
 ## 2026-11-18
 
+### English
+
+Aplikácia je aj po anglicky. Jazyk prepnete tlačidlom so zemeguľou v hornej lište; ak ste prihlásení, uloží sa do
+nastavení účtu a platí na každom zariadení.
+
 ### Obľúbené a účet
 
 Hviezdičkou pri zastávke, linke alebo nájdenej trase si ich pripnete do Obľúbených a uvidíte ich na každom

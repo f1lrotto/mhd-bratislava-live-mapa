@@ -2,7 +2,8 @@
   import { onMount, untrack } from 'svelte'
   import { track } from '../lib/analytics.svelte'
   import { passes } from '../lib/filter'
-  import { bandColor, dayText, delayText, fromLocalInput, plural, toLocalInput, TZ, vehicleName } from '../lib/format'
+  import { bandColor, dayText, delayText, fromLocalInput, percent, toLocalInput, TZ, vehicleName } from '../lib/format'
+  import { count, locale, t } from '../lib/i18n'
   import { frame, latest, loadRange, pause, play, ready, replay, seek, SPEEDS } from '../lib/replay.svelte'
   import { app, navigate } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
@@ -11,17 +12,18 @@
 
   let { at }: { at: string | null } = $props()
 
-  const CLOCK = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
-  const WEEKDAY = new Intl.DateTimeFormat('sk-SK', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'numeric' })
+  // 24-hour Bratislava time in both languages; the weekday follows the language.
+  const CLOCK = $derived(new Intl.DateTimeFormat(locale(), { timeZone: TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))
+  const WEEKDAY = $derived(new Intl.DateTimeFormat(locale(), { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'numeric' }))
 
-  const iso = (t: number) => new Date(t * 1000).toISOString()
+  const iso = (s: number) => new Date(s * 1000).toISOString()
   /** A `cas` value as a Unix time; a hand-typed "+01:00" arrives as " 01:00". */
   function parseAt(v: string | null): number | null {
-    const t = v ? Date.parse(v.replace(' ', '+')) / 1000 : NaN
-    return Number.isNaN(t) ? null : t
+    const s = v ? Date.parse(v.replace(' ', '+')) / 1000 : NaN
+    return Number.isNaN(s) ? null : s
   }
   /** A Bratislava calendar day "2026-11-13" of a Unix time. */
-  const localDay = (t: number) => toLocalInput(iso(t)).slice(0, 10)
+  const localDay = (s: number) => toLocalInput(iso(s)).slice(0, 10)
   const wallTime = (day: string, hm: string) => Date.parse(fromLocalInput(`${day}T${hm}`)!) / 1000
   function nextDay(day: string): string {
     const [y, m, d] = day.split('-').map(Number)
@@ -50,16 +52,16 @@
   // A link to another time (back/forward) moves there; the URL this panel writes itself doesn't.
   let written: string | null = null
   $effect(() => {
-    const t = at !== written ? parseAt(at) : null
-    if (t != null) untrack(() => Math.abs(t - replay.t) >= 60 && seek(t))
+    const s = at !== written ? parseAt(at) : null
+    if (s != null) untrack(() => Math.abs(s - replay.t) >= 60 && seek(s))
   })
 
   // The URL follows the replayed minute while paused, so it can be shared ("Friday at 17:00").
   $effect(() => {
-    const t = replay.t
-    if (replay.playing || !t) return
+    const s = replay.t
+    if (replay.playing || !s) return
     const timer = setTimeout(() => {
-      const v = fromLocalInput(toLocalInput(iso(t)))
+      const v = fromLocalInput(toLocalInput(iso(s)))
       if (app.view.kind === 'replay' && v !== app.view.at) {
         written = v
         navigate({ kind: 'replay', at: v }, { replace: true })
@@ -102,7 +104,7 @@
     const out: { day: string; label: string; has: boolean }[] = []
     for (let d = localDay(hours[0]); d <= today; d = nextDay(d)) out.push({ day: d, label: '', has: has.has(d) })
     const yesterday = out.at(-2)?.day
-    for (const x of out) x.label = x.day === today ? 'dnes' : x.day === yesterday ? 'včera' : dayText(`${x.day}T12:00:00Z`)
+    for (const x of out) x.label = x.day === today ? t('dnes', 'today') : x.day === yesterday ? t('včera', 'yesterday') : dayText(`${x.day}T12:00:00Z`)
     return out.reverse()
   })
 
@@ -121,18 +123,18 @@
   })
   const shown = $derived(vehicles.filter((v) => passes(v, app.filters)))
   const running = $derived(shown.filter((v) => v.service === 'running' && v.delay != null))
-  const lateShare = $derived(running.length ? Math.round((running.filter((v) => v.delay! >= 300).length / running.length) * 100) : null)
+  const lateShare = $derived(running.length ? running.filter((v) => v.delay! >= 300).length / running.length : null)
   const sel = $derived(replay.sel ? vehicles.find((v) => v.key === replay.sel) : null)
   const atLatest = $derived(replay.t >= latest() - 1)
 </script>
 
-<Panel label="Záznam">
+<Panel label={t('Záznam', 'Replay')}>
   {#snippet header()}
-    <strong>Záznam jázd</strong>
+    <strong>{t('Záznam jázd', 'Journey replay')}</strong>
   {/snippet}
 
   <div class="clock-row">
-    <button class="play" onclick={toggle} disabled={atLatest && !replay.playing} aria-label={replay.playing ? 'Pozastaviť' : 'Prehrať'}>
+    <button class="play" onclick={toggle} disabled={atLatest && !replay.playing} aria-label={replay.playing ? t('Pozastaviť', 'Pause') : t('Prehrať', 'Play')}>
       <svg viewBox="0 0 24 24" aria-hidden="true">
         {#if replay.playing}<path d="M8 5v14M16 5v14" />{:else}<path d="M8 5l11 7-11 7z" />{/if}
       </svg>
@@ -144,12 +146,12 @@
     {#if day}
       <button class="time-btn" class:open={timeOpen} aria-expanded={timeOpen} aria-controls="replay-time" onclick={() => (timeOpen = !timeOpen)}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
-        Čas
+        {t('Čas', 'Time')}
       </button>
     {/if}
   </div>
   {#if timeOpen && day}
-    <div class="time-pop" id="replay-time" role="group" aria-label="Čas záznamu">
+    <div class="time-pop" id="replay-time" role="group" aria-label={t('Čas záznamu', 'Replay time')}>
       <TimeStepper value={replay.t * 1000} min={(hours[0] ?? 0) * 1000} max={latest() * 1000} onchange={(ms) => seek(ms / 1000)} />
     </div>
   {/if}
@@ -166,7 +168,7 @@
         step="15"
         value={replay.t}
         oninput={(e) => seek(+e.currentTarget.value)}
-        aria-label="Čas záznamu"
+        aria-label={t('Čas záznamu', 'Replay time')}
         aria-valuetext={CLOCK.format(replay.t * 1000)}
       />
       <div class="ticks small muted" aria-hidden="true"><span>0</span><span>6</span><span>12</span><span>18</span><span>24</span></div>
@@ -174,9 +176,9 @@
   {/if}
 
   <div class="controls">
-    <button class="step" onclick={() => seek(replay.t - 600)} aria-label="O 10 minút späť">−10 min</button>
-    <button class="step" onclick={() => seek(replay.t + 600)} disabled={atLatest} aria-label="O 10 minút dopredu">+10 min</button>
-    <div class="speeds" role="group" aria-label="Rýchlosť prehrávania">
+    <button class="step" onclick={() => seek(replay.t - 600)} aria-label={t('O 10 minút späť', '10 minutes back')}>−10 min</button>
+    <button class="step" onclick={() => seek(replay.t + 600)} disabled={atLatest} aria-label={t('O 10 minút dopredu', '10 minutes forward')}>+10 min</button>
+    <div class="speeds" role="group" aria-label={t('Rýchlosť prehrávania', 'Playback speed')}>
       {#each SPEEDS as s (s)}
         <button aria-pressed={replay.speed === s} onclick={() => (replay.speed = s)}>{s}×</button>
       {/each}
@@ -185,15 +187,18 @@
 
   <p class="status" class:empty={isReady && !vehicles.length} role="status">
     {#if replay.error && !isReady}
-      Záznam sa nedá načítať ({replay.error}).
+      {t(`Záznam sa nedá načítať (${replay.error}).`, `Couldn't load the replay (${replay.error}).`)}
     {:else if replay.range && !hours.length}
-      Záznam polôh zatiaľ nie je k dispozícii.
+      {t('Záznam polôh zatiaľ nie je k dispozícii.', 'No position log is available yet.')}
     {:else if !isReady}
-      Načítavam záznam…
+      {t('Načítavam záznam…', 'Loading the replay…')}
     {:else if !vehicles.length}
-      V tomto čase nemáme záznam polôh.
+      {t('V tomto čase nemáme záznam polôh.', 'We have no positions logged for this time.')}
     {:else}
-      Na mape {plural(shown.length, 'vozidlo', 'vozidlá', 'vozidiel')}{#if lateShare != null}&nbsp;· 5+ min mešká {lateShare} %{/if}
+      {t('Na mape', 'On the map:')} {count(shown.length, ['vozidlo', 'vozidlá', 'vozidiel'], ['vehicle', 'vehicles'])}{#if lateShare != null}&nbsp;· {t(
+          `5+ min mešká ${percent(lateShare)}`,
+          `${percent(lateShare)} 5+ min late`,
+        )}{/if}
     {/if}
   </p>
 
@@ -202,25 +207,27 @@
       {#if sel}
         {#if sel.line}<LineBadge line={sel.line} />{/if}
         <div class="sel-text">
-          <strong>{sel.dest ?? 'bez cieľa'}</strong>
+          <strong>{sel.dest ?? t('bez cieľa', 'no destination')}</strong>
           <span class="small muted">{vehicleName(sel.key, null)}</span>
         </div>
         <span class="delay" style:color={sel.band != null ? bandColor(sel.band) : undefined}>
-          {sel.service === 'running' ? delayText(sel.delay, sel.delayCapped, sel.regional) : 'mimo spoja'}
+          {sel.service === 'running' ? delayText(sel.delay, sel.delayCapped, sel.regional) : t('mimo spoja', 'not on a trip')}
         </span>
       {:else}
-        <span class="sel-text muted">Vozidlo {vehicleName(replay.sel, null)} v tomto čase nejazdí.</span>
+        <span class="sel-text muted"
+          >{t(`Vozidlo ${vehicleName(replay.sel, null)} v tomto čase nejazdí.`, `Vehicle ${vehicleName(replay.sel, null)} isn't running at this time.`)}</span
+        >
       {/if}
-      <button class="close-sel" onclick={() => (replay.sel = null)} aria-label="Zrušiť výber vozidla">
+      <button class="close-sel" onclick={() => (replay.sel = null)} aria-label={t('Zrušiť výber vozidla', 'Deselect the vehicle')}>
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></svg>
       </button>
     </div>
   {:else}
-    <p class="small muted hint">Ťuknutím na vozidlo uvidíte jeho linku a meškanie v tom čase.</p>
+    <p class="small muted hint">{t('Ťuknutím na vozidlo uvidíte jeho linku a meškanie v tom čase.', 'Tap a vehicle to see its line and delay at that time.')}</p>
   {/if}
 
   {#if days.length}
-    <h3 class="section">Deň</h3>
+    <h3 class="section">{t('Deň', 'Day')}</h3>
     <div class="days">
       {#each days as d (d.day)}
         <button aria-pressed={d.day === day} disabled={!d.has} onclick={() => pickDay(d.day)}>{d.label}</button>
@@ -229,8 +236,10 @@
   {/if}
 
   <p class="note">
-    Polohy vozidiel uchovávame {replay.range?.rawDays ?? 30} dní, preto sa dá prehrať len posledný mesiac. Farba ukazuje
-    meškanie v danom čase, ako na živej mape.
+    {t(
+      `Polohy vozidiel uchovávame ${replay.range?.rawDays ?? 30} dní, preto sa dá prehrať len posledný mesiac. Farba ukazuje meškanie v danom čase, ako na živej mape.`,
+      `We keep vehicle positions for ${replay.range?.rawDays ?? 30} days, so only the last month can be replayed. The colour shows the delay at that time, as on the live map.`,
+    )}
   </p>
 </Panel>
 

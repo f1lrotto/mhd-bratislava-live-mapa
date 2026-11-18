@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { BAND_COLORS, BAND_LABELS, NO_DATA_COLOR, STALE_COLOR, TYPE_PLURAL } from '../lib/format'
+  import { BAND_COLORS, bandLabels, NO_DATA_COLOR, STALE_COLOR, typePlural } from '../lib/format'
   import { passes } from '../lib/filter'
+  import { t } from '../lib/i18n'
   import { shapeSvg } from '../lib/markers'
   import { app, filtersActive, navigate, NO_FILTERS, regionalDown, setFilters } from '../lib/state.svelte'
   import type { VehicleType } from '../lib/types'
@@ -21,66 +22,66 @@
   function toggleLine(l: string) {
     setFilters({ lines: f.lines.includes(l) ? f.lines.filter((x) => x !== l) : [...f.lines, l] })
   }
-  const legend = [...BAND_COLORS, NO_DATA_COLOR].map((c, i) => ({ c, label: BAND_LABELS[i] }))
+  const legend = $derived([...BAND_COLORS, NO_DATA_COLOR].map((c, i) => ({ c, label: bandLabels()[i] })))
 </script>
 
-<Panel tall label="Filtre">
+<Panel tall label={t('Filtre', 'Filters')}>
   {#snippet header()}
-    <strong>Filtre a legenda</strong>
+    <strong>{t('Filtre a legenda', 'Filters and legend')}</strong>
   {/snippet}
 
-  <h3 class="section">Druh</h3>
+  <h3 class="section">{t('Druh', 'Type')}</h3>
   <div class="toggles">
-    {#each TYPES as t (t)}
-      <button class="toggle" aria-pressed={!f.types.length || f.types.includes(t)} onclick={() => toggleType(t)}>
-        {@html shapeSvg(t, '#5b6470', 16)}
-        {TYPE_PLURAL[t]}
+    {#each TYPES as ty (ty)}
+      <button class="toggle" aria-pressed={!f.types.length || f.types.includes(ty)} onclick={() => toggleType(ty)}>
+        {@html shapeSvg(ty, '#5b6470', 16)}
+        {typePlural(ty)}
       </button>
     {/each}
     <button class="toggle" aria-pressed={f.regional} onclick={() => setFilters({ regional: !f.regional })}>
       {@html shapeSvg('regional', '#5b6470', 16)}
-      Regionálne autobusy
+      {t('Regionálne autobusy', 'Regional buses')}
     </button>
   </div>
   {#if f.regional && regionalDown()}
-    <p class="count empty">Polohy regionálnych autobusov (IDS BK) sa teraz nedajú načítať.</p>
+    <p class="count empty">{t('Polohy regionálnych autobusov (IDS BK) sa teraz nedajú načítať.', "Regional bus (IDS BK) positions can't be loaded right now.")}</p>
   {/if}
   <label class="switch">
     <input type="checkbox" checked={f.late} onchange={(e) => setFilters({ late: e.currentTarget.checked })} />
-    Len meškajúce 5+ min
+    {t('Len meškajúce 5+ min', 'Only 5+ min late')}
   </label>
   <label class="switch">
     <input type="checkbox" checked={!f.parked} onchange={(e) => setFilters({ parked: !e.currentTarget.checked })} />
-    Skryť odstavené vozidlá
+    {t('Skryť odstavené vozidlá', 'Hide parked vehicles')}
   </label>
 
   <p class="count" class:empty={!shown && total}>
-    {#if total && !shown}Filtrom nezodpovedá žiadne vozidlo.{:else}Zobrazených {shown} z {total} vozidiel.{/if}
+    {#if total && !shown}{t('Filtrom nezodpovedá žiadne vozidlo.', 'No vehicle matches the filters.')}{:else}{t(`Zobrazených ${shown} z ${total} vozidiel.`, `Showing ${shown} of ${total} vehicles.`)}{/if}
   </p>
 
   {#if filtersActive()}
-    <button class="secondary" onclick={() => setFilters(NO_FILTERS)}>Zrušiť filtre</button>
+    <button class="secondary" onclick={() => setFilters(NO_FILTERS)}>{t('Zrušiť filtre', 'Clear filters')}</button>
   {/if}
 
-  <h3 class="section">Legenda</h3>
+  <h3 class="section">{t('Legenda', 'Legend')}</h3>
   <ul class="legend">
     {#each legend as l (l.label)}
       <li><span class="sw" style:background={l.c}></span>{l.label}</li>
     {/each}
-    <li><span class="sw" style:background={STALE_COLOR}></span>stojí 10+ min</li>
+    <li><span class="sw" style:background={STALE_COLOR}></span>{t('stojí 10+ min', 'standing 10+ min')}</li>
   </ul>
   <ul class="legend">
-    {#each TYPES as t (t)}
-      <li>{@html shapeSvg(t, '#5b6470', 16)} {TYPE_PLURAL[t].toLowerCase()}</li>
+    {#each TYPES as ty (ty)}
+      <li>{@html shapeSvg(ty, '#5b6470', 16)} {typePlural(ty).toLowerCase()}</li>
     {/each}
-    <li>{@html shapeSvg('regional', '#5b6470', 16)} regionálne autobusy IDS BK</li>
+    <li>{@html shapeSvg('regional', '#5b6470', 16)} {t('regionálne autobusy IDS BK', 'IDS BK regional buses')}</li>
   </ul>
-  <p class="muted small">Šípka pri značke ukazuje smer jazdy.</p>
+  <p class="muted small">{t('Šípka pri značke ukazuje smer jazdy.', 'The arrow by a marker shows the direction of travel.')}</p>
 
-  <h3 class="section">Linky {f.lines.length ? `(${f.lines.length})` : ''}</h3>
+  <h3 class="section">{t('Linky', 'Lines')} {f.lines.length ? `(${f.lines.length})` : ''}</h3>
   <LineGrid selected={f.lines} onpick={toggleLine} />
 
-  <button class="secondary" onclick={() => navigate({ kind: 'privacy' })}>Ochrana súkromia a cookies</button>
+  <button class="secondary" onclick={() => navigate({ kind: 'privacy' })}>{t('Ochrana súkromia a cookies', 'Privacy and cookies')}</button>
 </Panel>
 
 <style>

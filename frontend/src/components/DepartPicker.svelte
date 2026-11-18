@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { dayText, fromLocalInput, toLocalInput } from '../lib/format'
+  import { locale, t } from '../lib/i18n'
   import TimeStepper from './TimeStepper.svelte'
 
   /** The departure time of the planner and the reachability map: now, or a Bratislava day and time
@@ -62,9 +63,10 @@
   }
 
   // --- calendar ------------------------------------------------------------------------------------
-  const WEEKDAYS = ['po', 'ut', 'st', 'št', 'pi', 'so', 'ne']
-  const MONTH = new Intl.DateTimeFormat('sk-SK', { month: 'long', year: 'numeric', timeZone: 'UTC' })
-  const FULL_DAY = new Intl.DateTimeFormat('sk-SK', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })
+  // Weeks start on Monday in both languages.
+  const WEEKDAYS = $derived(t('po ut st št pi so ne', 'Mo Tu We Th Fr Sa Su').split(' '))
+  const MONTH = $derived(new Intl.DateTimeFormat(locale(), { month: 'long', year: 'numeric', timeZone: 'UTC' }))
+  const FULL_DAY = $derived(new Intl.DateTimeFormat(locale(), { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }))
   /** The month shown, "2026-11". */
   let month = $state('')
   const days = $derived.by(() => {
@@ -104,22 +106,22 @@
   }
 </script>
 
-<div class="chips" role="group" aria-label="Čas odchodu">
-  <button class:active={!at} aria-pressed={!at} onclick={setNow}>Teraz</button>
-  <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>Dnes</button>
-  <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>Zajtra</button>
+<div class="chips" role="group" aria-label={t('Čas odchodu', 'Departure time')}>
+  <button class:active={!at} aria-pressed={!at} onclick={setNow}>{t('Teraz', 'Now')}</button>
+  <button class:active={atDate === today} aria-pressed={atDate === today} onclick={() => setDay(today)}>{t('Dnes', 'Today')}</button>
+  <button class:active={atDate === tomorrow} aria-pressed={atDate === tomorrow} onclick={() => setDay(tomorrow)}>{t('Zajtra', 'Tomorrow')}</button>
   <button
     class="trigger"
     class:active={otherDay}
     class:open={picker === 'date'}
     aria-expanded={picker === 'date'}
     aria-controls="depart-pop"
-    aria-label={otherDay && at ? `Deň odchodu: ${dayText(at)}` : 'Vybrať iný deň'}
+    aria-label={otherDay && at ? t(`Deň odchodu: ${dayText(at)}`, `Departure day: ${dayText(at)}`) : t('Vybrať iný deň', 'Choose another day')}
     bind:this={dateBtn}
     onclick={() => toggle('date')}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5" /><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" /></svg>
-    {otherDay && at ? dayText(at) : 'Iný deň'}
+    {otherDay && at ? dayText(at) : t('Iný deň', 'Other day')}
   </button>
   {#if at}
     <button
@@ -127,7 +129,7 @@
       class:open={picker === 'time'}
       aria-expanded={picker === 'time'}
       aria-controls="depart-pop"
-      aria-label="Čas odchodu: {atTime}"
+      aria-label={t(`Čas odchodu: ${atTime}`, `Departure time: ${atTime}`)}
       bind:this={timeBtn}
       onclick={() => toggle('time')}
     >
@@ -143,18 +145,18 @@
     class="pop"
     id="depart-pop"
     role="group"
-    aria-label={picker === 'date' ? 'Deň odchodu' : 'Čas odchodu'}
+    aria-label={picker === 'date' ? t('Deň odchodu', 'Departure day') : t('Čas odchodu', 'Departure time')}
     tabindex="-1"
     bind:this={pop}
     onkeydown={(e) => e.key === 'Escape' && (e.stopPropagation(), close())}
   >
     {#if picker === 'date'}
       <div class="month">
-        <button class="nav" onclick={() => shiftMonth(-1)} disabled={month <= today.slice(0, 7)} aria-label="Predchádzajúci mesiac">
+        <button class="nav" onclick={() => shiftMonth(-1)} disabled={month <= today.slice(0, 7)} aria-label={t('Predchádzajúci mesiac', 'Previous month')}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 6l-6 6 6 6" /></svg>
         </button>
         <strong aria-live="polite">{MONTH.format(new Date(`${month}-01T00:00:00Z`))}</strong>
-        <button class="nav" onclick={() => shiftMonth(1)} disabled={month >= lastDay.slice(0, 7)} aria-label="Ďalší mesiac">
+        <button class="nav" onclick={() => shiftMonth(1)} disabled={month >= lastDay.slice(0, 7)} aria-label={t('Ďalší mesiac', 'Next month')}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6" /></svg>
         </button>
       </div>
@@ -162,7 +164,7 @@
         {#each WEEKDAYS as w (w)}<span>{w}</span>{/each}
       </div>
       <!-- svelte-ignore a11y_interactive_supports_focus -->
-      <div class="grid days" role="group" aria-label="Dni" onkeydown={(e) => gridKeys(e, 7)}>
+      <div class="grid days" role="group" aria-label={t('Dni', 'Days')} onkeydown={(e) => gridKeys(e, 7)}>
         {#each days as d, i (d ?? `blank${i}`)}
           {#if d}
             <button

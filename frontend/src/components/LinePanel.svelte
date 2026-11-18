@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { bandColor, delayBand, delayText, minutes, plural, TYPE_LABELS, vehicleName } from '../lib/format'
+  import { bandColor, delayBand, delayText, minutes, typeLabel, vehicleName } from '../lib/format'
+  import { count, locale, t } from '../lib/i18n'
   import { app, navigate } from '../lib/state.svelte'
   import type { LineDirection, RibbonVehicle } from '../lib/types'
   import FavButton from './FavButton.svelte'
@@ -36,26 +37,35 @@
   }
 
   function where(d: LineDirection, v: RibbonVehicle): string {
-    if (v.offRoute) return 'mimo trasy'
-    if (v.along < AT_END_M) return `na konečnej ${d.from}`
-    if (v.along > d.length - AT_END_M) return `na konečnej ${d.headsign}`
-    return `za zastávkou ${d.stops[v.lastStop]?.name ?? ''}`
+    if (v.offRoute) return t('mimo trasy', 'off the route')
+    if (v.along < AT_END_M) return t(`na konečnej ${d.from}`, `at the terminus ${d.from}`)
+    if (v.along > d.length - AT_END_M) return t(`na konečnej ${d.headsign}`, `at the terminus ${d.headsign}`)
+    const stop = d.stops[v.lastStop]?.name ?? ''
+    return t(`za zastávkou ${stop}`, `past ${stop}`)
   }
 
   function summary(d: LineDirection): string {
     const s = d.summary
-    const parts = [plural(s.count, 'vozidlo', 'vozidlá', 'vozidiel') + ` smer ${d.headsign}`]
-    if (s.medianDelay != null)
-      parts.push(s.medianDelay < 120 ? 'väčšinou načas' : `medián meškania ${delayText(s.medianDelay, false, regional)}`)
+    const parts = [count(s.count, ['vozidlo', 'vozidlá', 'vozidiel'], ['vehicle', 'vehicles']) + t(` smer ${d.headsign}`, ` towards ${d.headsign}`)]
+    if (s.medianDelay != null) {
+      const med = delayText(s.medianDelay, false, regional)
+      parts.push(s.medianDelay < 120 ? t('väčšinou načas', 'mostly on time') : t(`medián meškania ${med}`, `median delay ${med}`))
+    }
     if (s.biggestGap) {
       const g = s.biggestGap
+      const gap = minutes(g.s)
       parts.push(
         g.fromStop && g.fromStop !== g.afterStop
-          ? `medzera ≈${minutes(g.s)} na úseku ${g.fromStop} – ${g.afterStop}`
-          : `medzera ≈${minutes(g.s)} pri zastávke ${g.afterStop}`,
+          ? t(`medzera ≈${gap} na úseku ${g.fromStop} – ${g.afterStop}`, `a ≈${gap} gap between ${g.fromStop} and ${g.afterStop}`)
+          : t(`medzera ≈${gap} pri zastávke ${g.afterStop}`, `a ≈${gap} gap at ${g.afterStop}`),
       )
     }
-    else if (s.bunched) parts.push(s.bunched === 1 ? 'dve vozidlá idú tesne za sebou' : `${s.bunched}× vozidlá tesne za sebou`)
+    else if (s.bunched)
+      parts.push(
+        s.bunched === 1
+          ? t('dve vozidlá idú tesne za sebou', 'two vehicles running close together')
+          : t(`${s.bunched}× vozidlá tesne za sebou`, `${s.bunched}× vehicles running close together`),
+      )
     return parts.join(', ')
   }
 
@@ -63,29 +73,32 @@
     navigate({ kind: 'vehicle', key })
   }
 
-  const UNMATCHED: Record<string, string> = {
-    to_depot: 'do depa',
-    no_destination: 'bez cieľa',
-    unknown_direction: 'neznámy smer',
-    unknown_trip: 'spoj nie je v cestovnom poriadku',
-    unknown_line: 'linka nie je v cestovnom poriadku',
-  }
+  const unmatchedText = (r: string): string =>
+    ({
+      to_depot: t('do depa', 'to the depot'),
+      no_destination: t('bez cieľa', 'no destination'),
+      unknown_direction: t('neznámy smer', 'unknown direction'),
+      unknown_trip: t('spoj nie je v cestovnom poriadku', 'trip not in the timetable'),
+      unknown_line: t('linka nie je v cestovnom poriadku', 'line not in the timetable'),
+    })[r] ?? r
 </script>
 
-<Panel tall label="Linka {line}">
+<Panel tall label={t(`Linka ${line}`, `Line ${line}`)}>
   {#snippet header()}
     <LineBadge {line} size="lg" />
     <div class="head-text">
-      <strong>Linka {line}</strong>
-      <span class="muted">{regional ? `regionálny autobus${info.operator ? ` · ${info.operator}` : ''}` : info ? TYPE_LABELS[info.type] : ''}</span>
+      <strong>{t(`Linka ${line}`, `Line ${line}`)}</strong>
+      <span class="muted">{regional ? t('regionálny autobus', 'regional bus') + (info.operator ? ` · ${info.operator}` : '') : info ? typeLabel(info.type) : ''}</span>
     </div>
-    {#if info}<FavButton kind="line" ref={line} label="linka {line}" />{/if}
+    {#if info}<FavButton kind="line" ref={line} label={t(`linka ${line}`, `line ${line}`)} />{/if}
   {/snippet}
 
   {#if !lv}
     {#if app.lineViewError}
       <p class="note error">
-        {app.lineViewError.startsWith('unknown line') ? `Linka ${line} neexistuje.` : `Linku sa nepodarilo načítať (${app.lineViewError}).`}
+        {app.lineViewError.startsWith('unknown line')
+          ? t(`Linka ${line} neexistuje.`, `Line ${line} doesn't exist.`)
+          : t(`Linku sa nepodarilo načítať (${app.lineViewError}).`, `Couldn't load the line (${app.lineViewError}).`)}
       </p>
     {:else}
       <div class="skeleton" aria-busy="true">
@@ -95,10 +108,10 @@
       </div>
     {/if}
   {:else if !current}
-    <p class="note">Linka {line} nemá v cestovnom poriadku žiadnu trasu.</p>
+    <p class="note">{t(`Linka ${line} nemá v cestovnom poriadku žiadnu trasu.`, `Line ${line} has no route in the timetable.`)}</p>
   {:else}
     {#if lv.directions.length > 1}
-      <div class="tabs" class:many={lv.directions.length > 2} role="group" aria-label="Smer">
+      <div class="tabs" class:many={lv.directions.length > 2} role="group" aria-label={t('Smer', 'Direction')}>
         {#each lv.directions as d (d.id)}
           <button
             aria-pressed={d.id === current.id}
@@ -116,9 +129,9 @@
     <p class="summary">{summary(current).replace(/\.?$/, '.')}</p>
     <p class="interval">
       {#if current.interval}
-        Podľa cestovného poriadku teraz každých <strong class="nowrap">{minutes(current.interval)}</strong>
+        {t('Podľa cestovného poriadku teraz každých', 'Timetabled now every')} <strong class="nowrap">{minutes(current.interval)}</strong>
       {:else}
-        Podľa cestovného poriadku teraz nepremáva
+        {t('Podľa cestovného poriadku teraz nepremáva', 'Not timetabled to run now')}
       {/if}
     </p>
 
@@ -143,7 +156,7 @@
           style:top="{14 - 13 * (row.get(v.key) ?? 0)}px"
           style:background={bandColor(delayBand(v.delay))}
           tabindex="-1"
-          aria-label="Vozidlo {vehicleName(v.key, v.tripNo)}"
+          aria-label={t('Vozidlo', 'Vehicle') + ' ' + vehicleName(v.key, v.tripNo)}
           onclick={() => openVehicle(v.key)}
         ></button>
       {/each}
@@ -156,14 +169,14 @@
     <button class="reliability" onclick={() => navigate({ kind: 'reliability', line, dir: current.id, weekends: false })}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM4 16h4v4H4z" /></svg>
       <span class="row-main">
-        <span>Kde a kedy linka mešká</span>
-        <span class="muted small">spoľahlivosť za posledné 4 týždne</span>
+        <span>{t('Kde a kedy linka mešká', 'Where and when the line runs late')}</span>
+        <span class="muted small">{t('spoľahlivosť za posledné 4 týždne', 'reliability over the last 4 weeks')}</span>
       </span>
       <span class="chev" aria-hidden="true">›</span>
     </button>
 
     {#if running.length}
-      <h3 class="section">Poradie vozidiel od začiatku trasy</h3>
+      <h3 class="section">{t('Poradie vozidiel od začiatku trasy', 'Vehicles in order from the start of the route')}</h3>
       <ol class="order">
         {#each running as v, i (v.key)}
           <li>
@@ -179,28 +192,28 @@
               <div class="between {v.gapAhead.flag ?? ''}">
                 <span class="gap-line" aria-hidden="true"></span>
                 {#if v.gapAhead.s != null}≈{minutes(v.gapAhead.s)}{/if}
-                <span class="muted">· {(v.gapAhead.m / 1000).toFixed(1).replace('.', ',')} km</span>
-                {#if v.gapAhead.flag === 'gap'}<span class="flag">medzera</span>{/if}
-                {#if v.gapAhead.flag === 'bunched'}<span class="flag">tesne za sebou</span>{/if}
+                <span class="muted">· {(v.gapAhead.m / 1000).toLocaleString(locale(), { minimumFractionDigits: 1, maximumFractionDigits: 1 })} km</span>
+                {#if v.gapAhead.flag === 'gap'}<span class="flag">{t('medzera', 'gap')}</span>{/if}
+                {#if v.gapAhead.flag === 'bunched'}<span class="flag">{t('tesne za sebou', 'bunched')}</span>{/if}
               </div>
             {/if}
           </li>
         {/each}
       </ol>
     {:else}
-      <p class="note">V tomto smere teraz nejde žiadne vozidlo.</p>
+      <p class="note">{t('V tomto smere teraz nejde žiadne vozidlo.', 'No vehicle is running in this direction now.')}</p>
     {/if}
 
     {#if parked.length}
-      <h3 class="section">Stojace alebo mimo trasy</h3>
+      <h3 class="section">{t('Stojace alebo mimo trasy', 'Standing or off the route')}</h3>
       <ul class="unmatched">
         {#each parked as v (v.key)}
           <li>
             <button class="row" onclick={() => openVehicle(v.key)}>
               <span class="pip" style:background="var(--stale)"></span>
               <span class="row-main">
-                <span class="where">{v.offRoute ? 'mimo trasy' : where(current, v)}</span>
-                <span class="muted small">{vehicleName(v.key, v.tripNo)}{v.stale ? ' · poloha sa nemení 10+ min' : ''}</span>
+                <span class="where">{where(current, v)}</span>
+                <span class="muted small">{vehicleName(v.key, v.tripNo)}{v.stale ? t(' · poloha sa nemení 10+ min', ' · not moved for 10+ min') : ''}</span>
               </span>
               <span class="delay muted">{delayText(v.delay, false, regional)}</span>
             </button>
@@ -210,13 +223,13 @@
     {/if}
 
     {#if lv.unmatched.length}
-      <h3 class="section">Mimo poradia</h3>
+      <h3 class="section">{t('Mimo poradia', 'Not in the order')}</h3>
       <ul class="unmatched">
         {#each lv.unmatched as u (u.key)}
           <li>
             <button class="row" onclick={() => openVehicle(u.key)}>
               <span class="row-main"
-                ><span>{vehicleName(u.key, null)}</span><span class="muted small">{u.dest ?? 'bez cieľa'} · {UNMATCHED[u.reason] ?? u.reason}</span></span
+                ><span>{vehicleName(u.key, null)}</span><span class="muted small">{u.dest ?? t('bez cieľa', 'no destination')} · {unmatchedText(u.reason)}</span></span
               >
             </button>
           </li>

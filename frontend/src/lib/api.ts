@@ -88,8 +88,6 @@ export function planQuery(from: string | null, to: string | null, at: string | n
   if (!from || !to) return null
   const q = new URLSearchParams({ from, to })
   if (at) q.set('at', at)
-  if (app.placeNames[from]) q.set('fromName', app.placeNames[from])
-  if (app.placeNames[to]) q.set('toName', app.placeNames[to])
   return `/api/plan?${q}`
 }
 

@@ -59,10 +59,8 @@ class AppState {
   plan = $state.raw<{ query: string; data: Plan | null; error: string | null; loading: boolean } | null>(null)
   /** The last reachability response, for the panel and the map. */
   reach = $state.raw<{ query: string; data: Reach | null; error: string | null; loading: boolean } | null>(null)
-  /** The planner field the next map tap fills, while "Vybrať na mape" is on. */
+  /** The planner field the next map tap fills, while "pick on the map" is on. */
   pick = $state.raw<'from' | 'to' | null>(null)
-  /** Display names of coordinate points ("Moja poloha", "Bod na mape"), keyed by the "lat,lon" value. */
-  placeNames = $state.raw<Record<string, string>>({})
   /** The previous history entry is another panel of this app, so the panel shows a back button. */
   canBack = $state.raw(false)
   view = $state.raw<View>({ kind: 'none' })

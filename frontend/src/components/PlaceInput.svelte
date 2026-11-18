@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../lib/i18n'
   import { placeLabel, searchStations } from '../lib/places'
   import { app } from '../lib/state.svelte'
   import LineBadge from './LineBadge.svelte'
@@ -60,7 +61,7 @@
   <input
     bind:this={input}
     type="text"
-    placeholder={end === 'from' ? 'Odkiaľ' : 'Kam'}
+    placeholder={end === 'from' ? t('Odkiaľ', 'From') : t('Kam', 'To')}
     aria-label={label}
     role="combobox"
     aria-expanded={hits.length > 0}
@@ -79,22 +80,22 @@
     onblur={() => setTimeout(() => ((editing = false), (query = '')), 150)}
     onkeydown={key}
   />
-  <button class="icon" onclick={onlocate} aria-label="{label}: moja poloha" title="Moja poloha">
+  <button class="icon" onclick={onlocate} aria-label="{label}: {t('moja poloha', 'my location')}" title={t('Moja poloha', 'My location')}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" /><circle cx="12" cy="12" r="7.5" /><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3" /></svg>
   </button>
   <button
     class="icon"
     class:on={picking}
     onclick={onmap}
-    aria-label="{label}: vybrať na mape"
+    aria-label="{label}: {t('vybrať na mape', 'pick on the map')}"
     aria-pressed={picking}
-    title="Vybrať na mape"
+    title={t('Vybrať na mape', 'Pick on the map')}
   >
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z" /><circle cx="12" cy="10" r="2" /></svg>
   </button>
 </div>
 {#if editing && query.trim()}
-  <ul class="list" id="{id}-list" role="listbox" aria-label="Zastávky">
+  <ul class="list" id="{id}-list" role="listbox" aria-label={t('Zastávky', 'Stops')}>
     {#each hits as h, i (h.code)}
       <!-- Mouse down, not click, so the pick lands before the input's blur closes the list. -->
       <li
@@ -114,7 +115,7 @@
         </span>
       </li>
     {:else}
-      <li class="none muted">Žiadna zastávka s týmto názvom</li>
+      <li class="none muted">{t('Žiadna zastávka s týmto názvom', 'No stop with this name')}</li>
     {/each}
   </ul>
 {/if}

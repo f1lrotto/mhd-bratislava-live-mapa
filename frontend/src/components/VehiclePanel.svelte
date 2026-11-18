@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getJson, poll } from '../lib/api'
-  import { agoText, bandColor, delayText, hm, isRegional, TYPE_LABELS, vehicleName } from '../lib/format'
+  import { agoText, bandColor, delayText, hm, isRegional, percent, typeLabel, vehicleName } from '../lib/format'
+  import { t } from '../lib/i18n'
   import { app, feedDown, navigate, regionalDown } from '../lib/state.svelte'
   import type { ServiceState, VehicleDetail } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
@@ -31,13 +32,14 @@
   const regional = $derived(isRegional(key))
   const name = $derived(vehicleName(key, v?.tripNo))
   const operator = $derived(regional && v?.line ? app.lines[v.line]?.operator : null)
-  const SERVICE: Record<ServiceState, string> = {
-    running: 'V prevádzke',
-    layover: 'Na konečnej, čaká na odchod',
-    depot: 'Ide do depa',
-    parked: 'Stojí / mimo prevádzky',
-    unknown: 'Stav nevieme určiť',
-  }
+  const serviceText = (s: ServiceState): string =>
+    ({
+      running: t('V prevádzke', 'In service'),
+      layover: t('Na konečnej, čaká na odchod', 'At the terminus, waiting to leave'),
+      depot: t('Ide do depa', 'Going to the depot'),
+      parked: t('Stojí / mimo prevádzky', 'Parked / out of service'),
+      unknown: t('Stav nevieme určiť', 'Status unknown'),
+    })[s] ?? t('Stav nevieme určiť', 'Status unknown')
   const lv = $derived(v?.line && app.lineView?.line === v.line ? app.lineView : null)
   const dir = $derived(lv?.directions.find((d) => d.id === v?.dir) ?? null)
   const rv = $derived(dir?.vehicles.find((x) => x.key === key) ?? null)
@@ -47,66 +49,72 @@
     v?.movedAgo != null && app.live ? v.movedAgo + (app.tick + app.skewMs - Date.parse(app.live.feed.now)) / 1000 : null,
   )
 
-  const REASONS: Record<string, string> = {
-    to_depot: 'Ide do depa, preto nie je v poradí linky.',
-    no_destination: 'Vozidlo nehlási cieľ, smer nevieme určiť.',
-    unknown_direction: 'Cieľ nepatrí žiadnemu smeru linky v cestovnom poriadku.',
-    unknown_trip: 'Spoj nie je v cestovnom poriadku IDS BK.',
-    unknown_line: 'Linka nie je v cestovnom poriadku DPB.',
+  function reason(r: string): string {
+    if (regional && r === 'unknown_line') return t('Linka nie je v cestovnom poriadku IDS BK.', "The line isn't in the IDS BK timetable.")
+    return (
+      {
+        to_depot: t('Ide do depa, preto nie je v poradí linky.', "It's going to the depot, so it isn't in the line's order."),
+        no_destination: t('Vozidlo nehlási cieľ, smer nevieme určiť.', "The vehicle reports no destination, so its direction is unknown."),
+        unknown_direction: t('Cieľ nepatrí žiadnemu smeru linky v cestovnom poriadku.', "The destination doesn't match any of the line's timetabled directions."),
+        unknown_trip: t('Spoj nie je v cestovnom poriadku IDS BK.', "The trip isn't in the IDS BK timetable."),
+        unknown_line: t('Linka nie je v cestovnom poriadku DPB.', "The line isn't in the DPB timetable."),
+      }[r] ?? ''
+    )
   }
-  const reason = (r: string) => (regional && r === 'unknown_line' ? 'Linka nie je v cestovnom poriadku IDS BK.' : (REASONS[r] ?? ''))
 </script>
 
-<Panel label="Vozidlo {name}">
+<Panel label={t('Vozidlo', 'Vehicle') + ' ' + name}>
   {#snippet header()}
     {#if v?.line}<LineBadge line={v.line} size="lg" />{/if}
     <div class="head-text">
-      <strong class="dest">{v ? (v.dest ? `→ ${v.dest}` : 'Bez cieľa') : regional ? 'Regionálny spoj' : `Vozidlo ${key}`}</strong>
-      <span class="muted">{regional ? 'regionálny autobus' : v ? TYPE_LABELS[v.type] : ''} {name}</span>
+      <strong class="dest">{v ? (v.dest ? `→ ${v.dest}` : t('Bez cieľa', 'No destination')) : regional ? t('Regionálny spoj', 'Regional bus') : t(`Vozidlo ${key}`, `Vehicle ${key}`)}</strong>
+      <span class="muted">{regional ? t('regionálny autobus', 'regional bus') : v ? typeLabel(v.type) : ''} {name}</span>
     </div>
   {/snippet}
 
   {#if !app.live}
-    <p class="note">Načítavam polohy…</p>
+    <p class="note">{t('Načítavam polohy…', 'Loading positions…')}</p>
   {:else if !v}
     <p class="note">
-      {regional ? 'Spoj už skončil alebo nehlási polohu.' : `Vozidlo č. ${key} teraz nie je v prevádzke alebo nehlási polohu.`}
+      {regional
+        ? t('Spoj už skončil alebo nehlási polohu.', "The trip has ended or isn't reporting its position.")
+        : t(`Vozidlo č. ${key} teraz nie je v prevádzke alebo nehlási polohu.`, `Vehicle no. ${key} isn't in service now or isn't reporting its position.`)}
     </p>
   {:else}
     <div class="facts">
       {#if running}
         <div class="fact">
-          <span class="label">Meškanie</span>
+          <span class="label">{t('Meškanie', 'Delay')}</span>
           <span class="value" style:color={bandColor(v.band)}>{delayText(v.delay, v.delayCapped, v.regional)}</span>
         </div>
       {:else}
         <div class="fact">
-          <span class="label">Stav</span>
-          <span class="value small-value">{SERVICE[v.service] ?? SERVICE.unknown}</span>
+          <span class="label">{t('Stav', 'Status')}</span>
+          <span class="value small-value">{serviceText(v.service)}</span>
         </div>
       {/if}
       <div class="fact">
-        <span class="label">Poloha zmenená</span>
+        <span class="label">{t('Poloha zmenená', 'Last moved')}</span>
         <span class="value small-value">{agoText(movedAgo)}</span>
       </div>
     </div>
 
     {#if v.delayCapped && running}
-      <p class="note">Systém DPB nehlási viac ako 15 minút, skutočné meškanie môže byť vyššie.</p>
+      <p class="note">{t('Systém DPB nehlási viac ako 15 minút, skutočné meškanie môže byť vyššie.', "DPB's system reports at most 15 minutes, so the real delay may be longer.")}</p>
     {/if}
     {#if operator}
-      <p class="muted small">Dopravca: {operator}</p>
+      <p class="muted small">{t('Dopravca', 'Operator')}: {operator}</p>
     {/if}
     {#if regional ? regionalDown() : feedDown()}
-      <p class="note warn">Dáta o polohe sú staré, vozidlo už môže byť inde.</p>
+      <p class="note warn">{t('Dáta o polohe sú staré, vozidlo už môže byť inde.', 'The position data is old; the vehicle may be elsewhere by now.')}</p>
     {:else if v.stale}
-      <p class="note warn">Poloha sa viac ako 10 minút nezmenila. Vozidlo môže stáť alebo nehlásiť polohu.</p>
+      <p class="note warn">{t('Poloha sa viac ako 10 minút nezmenila. Vozidlo môže stáť alebo nehlásiť polohu.', "The position hasn't changed for over 10 minutes. The vehicle may be standing or not reporting its position.")}</p>
     {/if}
 
     {#if trip}
       {#if trip.passed.length}
         <button class="section passed-toggle" onclick={() => (showPassed = !showPassed)} aria-expanded={showPassed}>
-          Prejdené zastávky ({trip.passed.length}) <span aria-hidden="true">{showPassed ? '▴' : '▾'}</span>
+          {t('Prejdené zastávky', 'Passed stops')} ({trip.passed.length}) <span aria-hidden="true">{showPassed ? '▴' : '▾'}</span>
         </button>
         {#if showPassed}
           <ol class="stops passed">
@@ -119,7 +127,7 @@
                   {:else if s.actual}
                     <strong>{hm(s.actual)}</strong>
                   {:else}
-                    <span class="muted" title="Čas prejazdu nepoznáme, podľa cestovného poriadku">{hm(s.scheduled)}</span>
+                    <span class="muted" title={t('Čas prejazdu nepoznáme, podľa cestovného poriadku', 'Passing time unknown; timetabled time')}>{hm(s.scheduled)}</span>
                   {/if}
                 </span>
                 {#if s.station}
@@ -135,7 +143,7 @@
         {/if}
       {/if}
       <h3 class="section">
-        {trip.waiting ? `Odchod z konečnej o ${hm(trip.start)}` : 'Ďalšie zastávky'}
+        {trip.waiting ? t(`Odchod z konečnej o ${hm(trip.start)}`, `Leaves the terminus at ${hm(trip.start)}`) : t('Ďalšie zastávky', 'Next stops')}
       </h3>
       <ol class="stops">
         {#each nextStops as s (s.index)}
@@ -161,26 +169,26 @@
       </ol>
       {#if trip.stops.length > 8}
         <button class="more" onclick={() => (allStops = !allStops)} aria-expanded={allStops}>
-          {allStops ? 'Menej zastávok' : `Všetky zastávky (${trip.stops.length})`}
+          {allStops ? t('Menej zastávok', 'Fewer stops') : t(`Všetky zastávky (${trip.stops.length})`, `All stops (${trip.stops.length})`)}
         </button>
       {/if}
       {#if trip.uncertain}
-        <p class="note">Meškanie je 15+ min, časy môžu byť ešte neskôr.</p>
+        <p class="note">{t('Meškanie je 15+ min, časy môžu byť ešte neskôr.', 'The delay is 15+ min; the times may be later still.')}</p>
       {/if}
     {:else if detail && running}
-      <p class="note">Spoj z cestovného poriadku sme vozidlu nepriradili, ďalšie zastávky preto nevieme.</p>
+      <p class="note">{t('Spoj z cestovného poriadku sme vozidlu nepriradili, ďalšie zastávky preto nevieme.', "We couldn't match the vehicle to a timetabled trip, so its next stops are unknown.")}</p>
     {/if}
 
     {#if dir && rv && running}
       <p class="where">
         {#if rv.offRoute}
-          Mimo trasy smeru {dir.headsign}.
+          {t(`Mimo trasy smeru ${dir.headsign}.`, `Off the route towards ${dir.headsign}.`)}
         {:else if rv.along > dir.length - 250}
-          Na konečnej <strong>{dir.headsign}</strong>.
+          {t('Na konečnej', 'At the terminus')} <strong>{dir.headsign}</strong>.
         {:else if rv.along < 250}
-          Na konečnej <strong>{dir.from}</strong>, čaká na odchod.
+          {t('Na konečnej', 'At the terminus')} <strong>{dir.from}</strong>, {t('čaká na odchod', 'waiting to leave')}.
         {:else}
-          Za zastávkou <strong>{dir.stops[rv.lastStop]?.name}</strong>, {Math.round((rv.along / dir.length) * 100)} % trasy.
+          {t('Za zastávkou', 'Past')} <strong>{dir.stops[rv.lastStop]?.name}</strong>, {t(`${percent(rv.along / dir.length)} trasy`, `${percent(rv.along / dir.length)} of the route`)}.
         {/if}
       </p>
     {:else if unmatched && !(unmatched.reason === 'to_depot' && v.service === 'depot')}
@@ -189,7 +197,7 @@
 
     {#if v.line && app.lines[v.line]}
       <button class="primary" onclick={() => navigate({ kind: 'line', line: v.line!, dir: v.dir })}>
-        Celá linka {v.line}: {regional ? 'trasa a spoje' : 'poradie a medzery'}
+        {t(`Celá linka ${v.line}`, `Whole line ${v.line}`)}: {regional ? t('trasa a spoje', 'route and trips') : t('poradie a medzery', 'order and gaps')}
       </button>
     {/if}
   {/if}

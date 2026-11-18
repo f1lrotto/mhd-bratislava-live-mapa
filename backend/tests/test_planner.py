@@ -276,6 +276,10 @@ def test_api_plan_takes_a_naive_time_as_bratislava_and_gives_a_reason(tmp_path, 
         body = c.get("/api/reach", params={"from": "1", "at": "2026-11-16T07:55", "min": 20}).json()
         assert body["depart"] == iso(7, 55) and body["limit"] == 1200 and body["live"] is False
         assert [*(round(v, 5) for v in ll(5000)), 900, "B"] in body["stops"]  # B at 08:10
+        # A map point has no name: the client labels it in the visitor's language.
+        lon, lat = ll(-100)
+        walk = c.get("/api/plan", params={"from": f"{lat},{lon}", "to": "2", "at": "2026-11-16T07:55"}).json()
+        assert walk["options"][0]["legs"][0]["from"]["name"] is None
 
 
 def test_late_feeder_puts_the_transfer_at_risk_and_tracking_shows_it_missed(tmp_path):

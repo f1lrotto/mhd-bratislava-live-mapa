@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { delayText, TYPE_PLURAL } from '../lib/format'
+  import { delayText, percent, typePlural } from '../lib/format'
+  import { t } from '../lib/i18n'
   import { app, navigate } from '../lib/state.svelte'
   import type { VehicleType } from '../lib/types'
   import LineBadge from './LineBadge.svelte'
   import Panel from './Panel.svelte'
 
   const st = $derived(app.status)
-  const pct = (x: number | null | undefined) => (x == null ? '–' : `${Math.round(x * 100)} %`)
+  const pct = percent
 
   // Chart geometry: a gutter on the left for the % labels, room above the plot for the value label.
   const W = 300
@@ -70,58 +71,61 @@
   const labelX = (px: number) => Math.min(Math.max(px, L + 12), W - R - 12)
 </script>
 
-<Panel tall label="Stav dopravy">
+<Panel tall label={t('Stav dopravy', 'Service status')}>
   {#snippet header()}
-    <strong>Stav dopravy v meste</strong>
+    <strong>{t('Stav dopravy v meste', 'Service status in the city')}</strong>
   {/snippet}
 
   {#if !st}
-    <p class="note">Načítavam…</p>
+    <p class="note">{t('Načítavam…', 'Loading…')}</p>
   {:else}
     <div class="big">
       <div class="fact">
         <span class="value">{pct(st.shareLate)}</span>
-        <span class="label">vozidiel mešká 5+ min</span>
+        <span class="label">{t('vozidiel mešká 5+ min', 'of vehicles 5+ min late')}</span>
       </div>
       <div class="fact">
         <span class="value">{st.vehicles}</span>
-        <span class="label">vozidiel v prevádzke</span>
+        <span class="label">{t('vozidiel v prevádzke', 'vehicles in service')}</span>
       </div>
     </div>
     <div class="types">
-      {#each ['tram', 'trolleybus', 'bus'] as VehicleType[] as t (t)}
-        <span>{TYPE_PLURAL[t]} <strong>{st.byType[t] ?? 0}</strong></span>
+      {#each ['tram', 'trolleybus', 'bus'] as VehicleType[] as ty (ty)}
+        <span>{typePlural(ty)} <strong>{st.byType[ty] ?? 0}</strong></span>
       {/each}
     </div>
 
-    <h3 class="section">Najhoršie linky teraz</h3>
+    <h3 class="section">{t('Najhoršie linky teraz', 'Worst lines now')}</h3>
     {#if st.worst.length}
       <ol class="worst">
         {#each st.worst as w (w.line)}
           <li>
             <button class="row" onclick={() => navigate({ kind: 'line', line: w.line, dir: null })}>
               <LineBadge line={w.line} />
-              <span class="grow">medián {delayText(w.medianDelay)}</span>
-              <span class="muted small">{w.vehicles} voz. · {pct(w.shareLate)} mešká</span>
+              <span class="grow">{t('medián', 'median')} {delayText(w.medianDelay)}</span>
+              <span class="muted small">{t(`${w.vehicles} voz. · ${pct(w.shareLate)} mešká`, `${w.vehicles} veh. · ${pct(w.shareLate)} late`)}</span>
             </button>
           </li>
         {/each}
       </ol>
     {:else}
-      <p class="note">Žiadna linka s aspoň 3 vozidlami nemešká.</p>
+      <p class="note">{t('Žiadna linka s aspoň 3 vozidlami nemešká.', 'No line with at least 3 vehicles is running late.')}</p>
     {/if}
 
-    <h3 class="section">Podiel meškajúcich počas dňa</h3>
+    <h3 class="section">{t('Podiel meškajúcich počas dňa', 'Share running late through the day')}</h3>
     {#if st.history && Object.keys(st.history.today).length >= 6}
       <svg
         class="chart"
         viewBox="0 0 {W} {bottom + 16}"
         role="img"
-        aria-label="Podiel spojov meškajúcich dnes, naposledy {pct(lastDelayed?.v)} 2+ min a {pct(last?.v)} 5+ min"
+        aria-label={t(
+          `Podiel spojov meškajúcich dnes, naposledy ${pct(lastDelayed?.v)} 2+ min a ${pct(last?.v)} 5+ min`,
+          `Share of trips running late today, latest ${pct(lastDelayed?.v)} 2+ min and ${pct(last?.v)} 5+ min`,
+        )}
       >
         {#each yTicks as v (v)}
           <line x1={L} x2={W - R} y1={y(v)} y2={y(v)} class:axis={v === 0} class="grid" />
-          <text x={L - 5} y={y(v) + 3.5} text-anchor="end">{Math.round(v * 100)} %</text>
+          <text x={L - 5} y={y(v) + 3.5} text-anchor="end">{pct(v)}</text>
         {/each}
         {#each [0, 6, 12, 18, 24] as h (h)}
           <text x={x(h * 6)} y={bottom + 13} text-anchor={h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}>{h}:00</text>
@@ -144,13 +148,13 @@
       <p class="legend">
         <span class="key delayed-key"></span> 2+ min
         <span class="key today-key"></span> 5+ min
-        {#if st.history.baseline}<span class="key base-key"></span> 5+ min v bežný deň (medián 4 rovnakých dní){/if}
+        {#if st.history.baseline}<span class="key base-key"></span> {t('5+ min v bežný deň (medián 4 rovnakých dní)', '5+ min on a usual day (median of the same 4 weekdays)')}{/if}
       </p>
     {:else}
-      <p class="note">Graf sa zobrazí, keď sa nazbiera aspoň hodina záznamov.</p>
+      <p class="note">{t('Graf sa zobrazí, keď sa nazbiera aspoň hodina záznamov.', 'The chart shows once at least an hour of records has been collected.')}</p>
     {/if}
     {#if st.history && !st.history.baseline}
-      <p class="note">Porovnanie s bežným dňom bude dostupné po štyroch týždňoch záznamov.</p>
+      <p class="note">{t('Porovnanie s bežným dňom bude dostupné po štyroch týždňoch záznamov.', 'A comparison with a usual day will be available after four weeks of records.')}</p>
     {/if}
   {/if}
 </Panel>

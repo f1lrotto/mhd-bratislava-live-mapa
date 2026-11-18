@@ -16,6 +16,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { ANALYTICS, consent, standalone, track } from '../lib/analytics.svelte'
+  import { t } from '../lib/i18n'
 
   // "Teraz nie" hides the offer for two weeks; installing hides it for good.
   const KEY = 'install-dismissed'
@@ -86,10 +87,10 @@
     <div class="head">
       <img src="/apple-touch-icon.png" alt="" width="48" height="48" />
       <div>
-        <h2 id="install-title">Pridajte si MHD naživo na plochu</h2>
-        <p id="install-text">Mapa sa otvorí jedným ťuknutím, na celú obrazovku ako aplikácia.</p>
+        <h2 id="install-title">{t('Pridajte si MHD naživo na plochu', 'Add MHD naživo to your home screen')}</h2>
+        <p id="install-text">{t('Mapa sa otvorí jedným ťuknutím, na celú obrazovku ako aplikácia.', 'The map opens with one tap, full screen like an app.')}</p>
       </div>
-      <button class="x" onclick={() => dismiss('closed')} aria-label="Zavrieť">
+      <button class="x" onclick={() => dismiss('closed')} aria-label={t('Zavrieť', 'Close')}>
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
           ><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" /></svg
         >
@@ -98,21 +99,21 @@
     {#if mode === 'ios'}
       <ol>
         <li>
-          Ťuknite na <b>Zdieľať</b>
+          {t('Ťuknite na', 'Tap')} <b>{t('Zdieľať', 'Share')}</b>
           <svg class="share" viewBox="0 0 24 24" aria-hidden="true"
             ><path d="M12 15V3M8 7l4-4 4 4M7 10H5v11h14V10h-2" /></svg
           >
-          <span class="muted">(v Safari aj cez ⋯)</span>
+          <span class="muted">{t('(v Safari aj cez ⋯)', '(in Safari also under ⋯)')}</span>
         </li>
-        <li>Vyberte <b>Pridať na plochu</b></li>
+        <li>{t('Vyberte', 'Choose')} <b>{t('Pridať na plochu', 'Add to Home Screen')}</b></li>
       </ol>
       <div class="actions">
-        <button class="primary" onclick={() => dismiss('ios_understood')}>Rozumiem</button>
+        <button class="primary" onclick={() => dismiss('ios_understood')}>{t('Rozumiem', 'Got it')}</button>
       </div>
     {:else}
       <div class="actions">
-        <button class="secondary" onclick={() => dismiss('not_now')}>Teraz nie</button>
-        <button class="primary" onclick={install}>Pridať na plochu</button>
+        <button class="secondary" onclick={() => dismiss('not_now')}>{t('Teraz nie', 'Not now')}</button>
+        <button class="primary" onclick={install}>{t('Pridať na plochu', 'Add to home screen')}</button>
       </div>
     {/if}
   </div>
