@@ -24,9 +24,9 @@ function html(lead, button, url, after) {
 }
 
 /** Never throws: callers don't wait for it (see sendResetPassword in server.js). */
-async function send(to, subject, lead, button, url, after) {
+async function send(to, subject, lead, button, url, after, notice = false) {
   try {
-    await post(to, subject, lead, button, url, after)
+    await post(to, subject, lead, button, url, after, notice)
   } catch (e) {
     console.error(`[mail] sending failed: ${e}`)
   }
@@ -46,24 +46,36 @@ const RESET = 'Obnovenie hesla'
 const DAY_MS = 86_400_000
 const sent = new Map() // address -> [time, kind] of the emails sent to it in the last day
 let today = []
+const noticed = new Map() // "address kind" -> when a notice was last sent
 
-/** Whether another email to this address is allowed now; records it when it is. */
-function allowMail(to, kind, now = Date.now()) {
+/** Whether another email to this address is allowed now; records it when it is. A notice (a
+ * change on the account) doesn't count towards the address's daily emails, so it can't use up
+ * what a password reset needs. */
+function allowMail(to, kind, notice = false, now = Date.now()) {
   const addr = to.toLowerCase()
   const times = (sent.get(addr) ?? []).filter(([t]) => now - t < DAY_MS)
   today = today.filter((t) => now - t < DAY_MS)
-  const recent = times.some(([t, k]) => k === kind && now - t < PER_ADDRESS_MS)
+  const recent = notice
+    ? now - (noticed.get(`${addr} ${kind}`) ?? -Infinity) < PER_ADDRESS_MS
+    : times.some(([t, k]) => k === kind && now - t < PER_ADDRESS_MS)
   sent.set(addr, times)
   const cap = kind === RESET ? PER_DAY : PER_DAY - RESERVED
-  if (recent || times.length >= PER_ADDRESS_DAY || today.length >= cap) return false
+  if (recent || (!notice && times.length >= PER_ADDRESS_DAY) || today.length >= cap) return false
+  if (notice) {
+    // Remembered only for its two minutes, outside the address's daily count.
+    noticed.set(`${addr} ${kind}`, now)
+    today.push(now)
+    if (noticed.size > 10_000) for (const [k, t] of noticed) if (now - t >= PER_ADDRESS_MS) noticed.delete(k)
+    return true
+  }
   times.push([now, kind])
   today.push(now)
   if (sent.size > 10_000) for (const [k, v] of sent) if (!v.some(([t]) => now - t < DAY_MS)) sent.delete(k)
   return true
 }
 
-async function post(to, subject, lead, button, url, after) {
-  if (!allowMail(to, subject)) {
+async function post(to, subject, lead, button, url, after, notice = false) {
+  if (!allowMail(to, subject, notice)) {
     console.warn(`[mail] not sent: too many emails to this address or today`)
     return
   }
@@ -107,4 +119,28 @@ export const sendReset = (to, url) =>
     'Nastaviť nové heslo',
     url,
     'Odkaz platí hodinu. Ak ste o nové heslo nežiadali, tento e-mail ignorujte; vaše heslo sa nezmení.',
+  )
+
+const NOTICES = {
+  password: ['Heslo je zmenené', 'Heslo k vášmu účtu v MHD naživo sa práve zmenilo.'],
+  reset: ['Heslo je obnovené', 'Heslo k vášmu účtu v MHD naživo sa práve nastavilo cez odkaz z e-mailu a všetky zariadenia sme odhlásili.'],
+  twoFactorOn: ['Dvojstupňové overenie je zapnuté', 'K vášmu účtu v MHD naživo sa práve zapol prihlasovací kód z overovacej aplikácie.'],
+  twoFactorOff: ['Dvojstupňové overenie je vypnuté', 'Pri prihlásení do MHD naživo už netreba kód z overovacej aplikácie.'],
+  passkeyAdded: ['Pridaný prístupový kľúč', 'K vášmu účtu v MHD naživo sa práve pridal prístupový kľúč (passkey), ktorým sa dá prihlásiť bez hesla.'],
+  passkeyRemoved: ['Odstránený prístupový kľúč', 'Z vášho účtu v MHD naživo sa práve odstránil prístupový kľúč (passkey).'],
+  emailChanged: ['E-mail účtu je zmenený', 'Váš účet v MHD naživo teraz používa inú e-mailovú adresu. Na túto adresu už správy k účtu posielať nebudeme.'],
+}
+
+/** A change on the account, told to its (verified) address; url is the profile page. */
+export const sendNotice = (to, kind, url) =>
+  send(
+    to,
+    NOTICES[kind][0],
+    NOTICES[kind][1],
+    'Otvoriť profil',
+    url,
+    kind === 'emailChanged'
+      ? 'Ak ste to neboli vy, niekto pozná vaše heslo: napíšte nám na filip.hupka@gmail.com.'
+      : 'Ak ste to neboli vy, obnovte si heslo cez „Zabudli ste heslo?“ na prihlasovacej stránke; tým sa odhlásia všetky zariadenia.',
+    true,
   )

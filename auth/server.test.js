@@ -138,6 +138,8 @@ test('email verification, password change and reset', async () => {
   assert.ok(token)
   assert.equal((await other('/reset-password', { token, newPassword: 'tretie-heslo' })).status, 200)
   assert.equal((await dana('/profile')).body.user, null)
+  await new Promise((r) => setTimeout(r, 100))
+  assert.equal(mails.findLast((m) => m.to === 'dana@example.sk').subject, 'Heslo je obnovené')
   assert.equal((await other('/sign-in/email', { email: 'dana@example.sk', password: 'nove-heslo-1' })).status, 401)
   assert.equal((await other('/sign-in/email', { email: 'dana@example.sk', password: 'tretie-heslo' })).status, 200)
 })
@@ -294,4 +296,40 @@ test('a password reset takes an unverified account back from whoever added a sec
   const signIn = await owner('/sign-in/email', { email: 'petra@example.sk', password: pw + '-nove' })
   assert.equal(signIn.body.twoFactorRedirect, undefined)
   assert.equal((await owner('/profile')).body.user.twoFactorEnabled, false)
+})
+
+test('a verified address is told about changes on its account; an unverified one is not', async () => {
+  const { createOTP } = await import('@better-auth/utils/otp')
+  const { base32 } = await import('@better-auth/utils/base32')
+  const subjects = (to) => mails.filter((m) => m.to === to).map((m) => m.subject)
+  const settle = () => new Promise((r) => setTimeout(r, 100))
+  const pw = 'rado-' + 'heslo-1'
+  const r = browser('10.0.0.24')
+  await r('/sign-up/email', { email: 'rado@example.sk', password: pw, name: '' })
+  await r(await link('rado@example.sk'))
+  assert.equal((await r('/change-password', { currentPassword: pw, newPassword: pw + '2' })).status, 200)
+  const { totpURI } = (await r('/two-factor/enable', { password: pw + '2' })).body
+  const otp = createOTP(new TextDecoder().decode(base32.decode(new URL(totpURI).searchParams.get('secret'))))
+  await r('/two-factor/verify-totp', { code: await otp.totp() })
+  assert.equal((await r('/two-factor/disable', { password: pw + '2' })).status, 200)
+  // A wrong password changes nothing and tells nobody.
+  assert.equal((await r('/change-password', { currentPassword: 'zle-heslo-1', newPassword: pw + '3' })).status, 400)
+  await settle()
+  assert.deepEqual(subjects('rado@example.sk').slice(1), ['Heslo je zmenené', 'Dvojstupňové overenie je zapnuté', 'Dvojstupňové overenie je vypnuté'])
+  // Moving to a new address tells the old one.
+  await r('/change-email', { newEmail: 'rado.novy@example.sk', password: pw + '2', callbackURL: '/ucet' })
+  await r(await link('rado.novy@example.sk'))
+  await settle()
+  assert.equal(subjects('rado@example.sk').at(-1), 'E-mail účtu je zmenený')
+  assert.ok(mails.findLast((m) => m.to === 'rado@example.sk').url.endsWith('/ucet'))
+
+  // An unverified account: its address gets the reset link, and nothing about the reset.
+  const s = browser('10.0.0.25')
+  await s('/sign-up/email', { email: 'sona@example.sk', password: pw, name: '' })
+  await link('sona@example.sk')
+  await s('/request-password-reset', { email: 'sona@example.sk', redirectTo: '/ucet' })
+  const token = new URL((await s(await link('sona@example.sk'))).location, ORIGIN).searchParams.get('token')
+  assert.equal((await s('/reset-password', { token, newPassword: pw + '2' })).status, 200)
+  await settle()
+  assert.deepEqual(subjects('sona@example.sk'), ['Overte svoj e-mail', 'Obnovenie hesla'])
 })

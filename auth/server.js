@@ -18,11 +18,11 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { passkey } from '@better-auth/passkey'
 import { betterAuth } from 'better-auth'
-import { APIError, createAuthMiddleware, getSessionFromCtx } from 'better-auth/api'
+import { APIError, createAuthMiddleware, getSessionFromCtx, isAPIError } from 'better-auth/api'
 import { getMigrations } from 'better-auth/db/migration'
 import { toNodeHandler } from 'better-auth/node'
 import { twoFactor } from 'better-auth/plugins'
-import { sendReset, sendVerification } from './mail.js'
+import { sendNotice, sendReset, sendVerification } from './mail.js'
 import { passwordConfirmed, profile } from './profile.js'
 
 const DAY_S = 86_400
@@ -80,6 +80,7 @@ const guard = createAuthMiddleware(async (ctx) => {
     const token = body.token || ctx.query?.token
     const v = typeof token === 'string' && (await ctx.context.internalAdapter.findVerificationValue(`reset-password:${token}`))
     const user = v && v.expiresAt > new Date() && (await ctx.context.internalAdapter.findUserById(v.value))
+    if (user) resetUsers.set(ctx.request, user) // its address is told once the reset worked
     if (user && !user.emailVerified) {
       for (const model of ['twoFactor', 'passkey'])
         await ctx.context.adapter.deleteMany({ model, where: [{ field: 'userId', value: user.id }] })
@@ -90,16 +91,49 @@ const guard = createAuthMiddleware(async (ctx) => {
   // an account with someone else's address must not take it back with a link asked for before
   // the owner reset the password. (Better Auth still checks the token's signature afterwards.)
   if (ctx.path === '/verify-email' && typeof ctx.query?.token === 'string') {
-    let jwt = null
-    try {
-      jwt = JSON.parse(Buffer.from(ctx.query.token.split('.')[1], 'base64url').toString())
-    } catch {}
+    const jwt = linkToken(ctx)
     if (jwt?.updateTo && typeof jwt.userId === 'string' && typeof jwt.iat === 'number') {
       const account = await ctx.context.internalAdapter.findCredentialAccount(jwt.userId)
       // iat is in whole seconds: a second's slack keeps a link asked for just after signing up.
       if (account && new Date(account.updatedAt).getTime() > (jwt.iat + 1) * 1000) throw ctx.redirect('/ucet?error=INVALID_TOKEN')
     }
   }
+})
+
+/** Tell a verified address that something changed on its account, with a link to the profile on
+ * the host the request came to (as the other emailed links). An unverified address isn't told:
+ * whoever created the account may not own it, and must not use up its emails. */
+function notify(ctx, user, kind) {
+  if (user?.emailVerified) void sendNotice(user.email, kind, new URL('/ucet', ctx.context.baseURL).href)
+}
+
+/** The payload of an email-verification link's token (signed; Better Auth checks it). */
+function linkToken(ctx) {
+  try {
+    return JSON.parse(Buffer.from(String(ctx.query?.token).split('.')[1], 'base64url').toString())
+  } catch {
+    return null
+  }
+}
+
+/** The user a /reset-password request is for, looked up before the token is used. */
+const resetUsers = new WeakMap()
+
+const NOTICES = {
+  '/reset-password': 'reset',
+  '/change-password': 'password',
+  '/two-factor/disable': 'twoFactorOff',
+  '/passkey/verify-registration': 'passkeyAdded',
+  '/passkey/delete-passkey': 'passkeyRemoved',
+}
+
+/** After an endpoint: account changes are told to the account's address. */
+const tell = createAuthMiddleware(async (ctx) => {
+  const kind = NOTICES[ctx.path]
+  const r = ctx.context.returned
+  if (!kind || !r || isAPIError(r) || (r instanceof Response && r.status >= 400)) return
+  const user = kind === 'reset' ? resetUsers.get(ctx.request) : (ctx.context.newSession?.user ?? (await getSessionFromCtx(ctx))?.user)
+  notify(ctx, user, kind)
 })
 
 const passkeyOrigin = (host) => (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? `http://${host}` : `https://${host}`)
@@ -128,7 +162,7 @@ export function authOptions(dir) {
     },
     basePath: '/api/auth',
     advanced: { trustedProxyHeaders: true, ipAddress: { ipAddressHeaders: ['x-forwarded-for'] } },
-    hooks: { before: guard },
+    hooks: { before: guard, after: tell },
     // Endpoints the app doesn't use: /update-user stores name and image of any size, and
     // /verify-password would let a stolen session guess the password.
     // Two-step codes by email aren't offered, and the TOTP secret is shown only when turning it on.
@@ -178,7 +212,18 @@ export function authOptions(dir) {
       // was never verified (Better Auth only changes the email then).
       user: {
         update: {
-          before: async (u, ctx) => (ctx?.path === '/verify-email' && u.email ? { data: { ...u, emailVerified: true } } : undefined),
+          before: async (u, ctx) => {
+            if (ctx?.path !== '/verify-email' || !u.email) return
+            // The account moves to a new address: the old one, if it was verified, is told.
+            const jwt = linkToken(ctx)
+            const old = jwt?.updateTo && typeof jwt.userId === 'string' && (await ctx.context.internalAdapter.findUserById(jwt.userId))
+            if (old && old.email !== u.email) notify(ctx, old, 'emailChanged')
+            return { data: { ...u, emailVerified: true } }
+          },
+          // Two-step sign-in is on once a code from the app confirms it.
+          after: async (u, ctx) => {
+            if (ctx?.path === '/two-factor/verify-totp' && u?.twoFactorEnabled) notify(ctx, u, 'twoFactorOn')
+          },
         },
         // Email-link tokens and "trust this device" records point to the user without a foreign key.
         delete: { after: async (u) => void db.prepare('DELETE FROM verification WHERE value = ?').run(u.id) },

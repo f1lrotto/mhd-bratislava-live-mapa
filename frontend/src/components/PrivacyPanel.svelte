@@ -83,10 +83,11 @@
       zariadeniami a dátum pridania; súkromná časť, odtlačok prsta ani tvár vaše zariadenie neopustia.
     </p>
     <p>
-      Na e-mail vám posielame len správy k účtu: odkaz na overenie adresy (po vytvorení účtu a zmene e-mailu) a odkaz na
-      nové heslo, keď oň požiadate. Žiadne novinky ani reklamu. Posiela ich služba Resend (Resend, Inc., USA), ktorá
+      Na e-mail vám posielame len správy k účtu: odkaz na overenie adresy (po vytvorení účtu a zmene e-mailu), odkaz na
+      nové heslo, keď oň požiadate, a ak je adresa overená, upozornenie, keď sa na účte zmení heslo, e-mail (na pôvodnú
+      adresu), dvojstupňové overenie alebo prístupové kľúče. Žiadne novinky ani reklamu. Posiela ich služba Resend (Resend, Inc., USA), ktorá
       dostane vašu adresu a text správy a uchováva ich 30 dní; prenos do USA je chránený štandardnými zmluvnými
-      doložkami. Odkazy platia hodinu. Jednej adrese pošleme spravidla najviac päť správ za deň.
+      doložkami. Odkazy platia hodinu. Jednej adrese pošleme spravidla najviac päť odkazov za deň.
     </p>
     <p>
       Po prihlásení si prehliadač uloží cookie <code>__Secure-better-auth.session_token</code> s náhodným kľúčom relácie
